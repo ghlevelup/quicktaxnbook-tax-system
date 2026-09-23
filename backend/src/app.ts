@@ -5,7 +5,6 @@ import basicAuth from 'express-basic-auth';
 import helmet from 'helmet';
 import httpStatus from 'http-status';
 import passport from 'passport';
-import path from 'path';
 
 import config from '@/config/config';
 import morgan from '@/config/morgan';
@@ -43,15 +42,14 @@ app.use(xss());
 // gzip compression
 app.use(compression());
 
-// enable cors
+// enable cors — allowed origins come from config (CORS_ALLOWED_ORIGINS), so
+// adding a deployed frontend doesn't need a code change, just an env var.
 const corsOptions: cors.CorsOptions = {
   origin: (
     requestOrigin: string | undefined,
     callback: (err: Error | null, allow?: boolean) => void
   ) => {
-    const allowedOrigins = ['http://localhost:3000', 'http://localhost:8000'];
-
-    if (!requestOrigin || allowedOrigins.includes(requestOrigin)) {
+    if (!requestOrigin || config.corsAllowedOrigins.includes(requestOrigin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -77,19 +75,6 @@ const corsOptions: cors.CorsOptions = {
 
 // Apply CORS middleware before other routes
 app.use(cors(corsOptions));
-
-// serve locally-uploaded files (avatars, logos, ...)
-// helmet's default Cross-Origin-Resource-Policy: same-origin would otherwise
-// block the frontend (different port/origin in dev, different subdomain in
-// prod) from rendering these images at all — relax it for this route only.
-app.use(
-  `/${config.upload.localDir}`,
-  (_req: Request, res: Response, next: NextFunction) => {
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    next();
-  },
-  express.static(path.join(process.cwd(), config.upload.localDir))
-);
 
 // jwt authentication
 app.use(passport.initialize());

@@ -54,7 +54,13 @@ export default async function FirmLayout({
       brandHref={`/firm/${firmSlug}/dashboard`}
       navGroups={navGroups}
       profileHref={`/firm/${firmSlug}/profile`}
-      contextLabel={user.membership?.firm.name}
+      contextSlot={
+        user.membership?.firm.name ? (
+          <p className="truncate px-2 pt-1 text-xs font-medium text-muted-foreground group-data-[state=collapsed]:hidden">
+            {user.membership.firm.name}
+          </p>
+        ) : undefined
+      }
     >
       {children}
     </AreaShell>

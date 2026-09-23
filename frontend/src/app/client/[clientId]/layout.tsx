@@ -1,6 +1,8 @@
 import type { AppNavGroup } from '@/components/layout/app-sidebar';
 import { AreaShell } from '@/components/layout/area-shell';
+import { EntitySwitcher } from '@/components/client-portal/entity-switcher';
 import { requireClientAccess } from '@/features/auth/rbac/require';
+import type { ClientType } from '@/features/clients/types';
 import type { ReactNode } from 'react';
 
 interface ClientLayoutProps {
@@ -14,9 +16,13 @@ export default async function ClientPortalLayout({
 }: ClientLayoutProps) {
   const { clientId } = await params;
   const user = await requireClientAccess(clientId);
-  const clientName = user.clients?.find(
-    (access) => access.client.id === clientId,
-  )?.client.displayName;
+
+  const entities = (user.clients ?? []).map((access) => ({
+    id: access.client.id,
+    displayName: access.client.displayName,
+    type: access.client.type as ClientType,
+    active: access.client.status === 'ACTIVE',
+  }));
 
   const navGroups: AppNavGroup[] = [
     {
@@ -36,7 +42,9 @@ export default async function ClientPortalLayout({
       brandHref={`/client/${clientId}/dashboard`}
       navGroups={navGroups}
       profileHref={`/client/${clientId}/profile`}
-      contextLabel={clientName}
+      contextSlot={
+        <EntitySwitcher currentClientId={clientId} entities={entities} />
+      }
     >
       {children}
     </AreaShell>

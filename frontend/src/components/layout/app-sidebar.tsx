@@ -31,7 +31,7 @@ import { Icon, type IconName } from '@/components/icons/app-icons';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 
 export interface AppNavItem {
   id: string;
@@ -52,9 +52,11 @@ interface AppSidebarProps {
   navGroups: AppNavGroup[];
   profileHref: string;
   mobileTitle?: string;
-  /** Firm/client name shown under the app brand, so it's always clear whose
-   * workspace is currently open. */
-  contextLabel?: string;
+  /** Shown under the app brand, so it's always clear whose workspace is
+   * currently open — plain text (firm name) or an interactive entity
+   * switcher (client portal, when the login has access to more than one
+   * entity). */
+  contextSlot?: ReactNode;
 }
 
 export function AppSidebar({
@@ -62,7 +64,7 @@ export function AppSidebar({
   navGroups,
   profileHref,
   mobileTitle,
-  contextLabel,
+  contextSlot,
 }: AppSidebarProps) {
   const t = useTranslations();
   const { signOut } = useAuth();
@@ -97,11 +99,7 @@ export function AppSidebar({
     <div className="flex h-full min-w-0 flex-col bg-transparent text-start">
       <SidebarHeader>
         <AppBrand href={brandHref} onClick={onItemClick} />
-        {contextLabel ? (
-          <p className="truncate px-2 pt-1 text-xs font-medium text-muted-foreground group-data-[state=collapsed]:hidden">
-            {contextLabel}
-          </p>
-        ) : null}
+        {contextSlot}
       </SidebarHeader>
 
       <SidebarContent>

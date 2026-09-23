@@ -19,12 +19,20 @@
 // =============================================================================
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // "native" keeps local dev working on whatever OS you're on; the rhel
+  // target matches Vercel's serverless Node.js runtime (Amazon Linux).
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // Used only for migrations. On Vercel, DATABASE_URL should be Neon's
+  // pooled (PgBouncer) connection string — serverless functions open many
+  // short-lived connections, and pooling keeps that from exhausting Postgres.
+  // Migrations need a direct (non-pooled) connection, hence this separate URL.
+  directUrl = env("DIRECT_URL")
 }
 
 // =============================================================================
@@ -262,6 +270,7 @@ enum StorageProvider {
   GCS
   AZURE
   LOCAL
+  VERCEL_BLOB
 }
 
 enum VirusScanStatus {

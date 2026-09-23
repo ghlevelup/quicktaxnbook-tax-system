@@ -1,21 +1,13 @@
 import crypto from 'crypto';
-import fs from 'fs';
 import path from 'path';
 
+import { del, put } from '@vercel/blob';
 import { StoredFile } from '@prisma/client';
 
 import prisma from '@/client';
 import config from '@/config/config';
 
-const uploadRoot = path.join(process.cwd(), config.upload.localDir);
-
-const ensureUploadDir = (subDir: string): string => {
-  const dir = path.join(uploadRoot, subDir);
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-};
-
-export interface SaveLocalFileParams {
+export interface SaveFileParams {
   firmId?: string;
   uploadedById?: string;
   subDir: string; // e.g. "avatars", "firm-logos"
@@ -25,23 +17,32 @@ export interface SaveLocalFileParams {
   uploadIp?: string;
 }
 
-/** Saves a buffer to local disk under `uploads/<subDir>/` and records it as a StoredFile row. */
-export const saveLocalFile = async (params: SaveLocalFileParams): Promise<StoredFile> => {
-  const dir = ensureUploadDir(params.subDir);
+/** Uploads a buffer to Vercel Blob and records it as a StoredFile row.
+ * Works identically in local dev and in production — Blob is a hosted
+ * service, not tied to the deployment filesystem, which is what makes it
+ * safe to use from Vercel's read-only serverless functions. */
+export const saveFile = async (params: SaveFileParams): Promise<StoredFile> => {
   const ext = path.extname(params.originalName).toLowerCase();
-  const filename = `${crypto.randomUUID()}${ext}`;
-  const key = `${params.subDir}/${filename}`;
+  const pathname = `${params.subDir}/${crypto.randomUUID()}${ext}`;
 
-  fs.writeFileSync(path.join(dir, filename), params.buffer);
+  const blob = await put(pathname, params.buffer, {
+    access: 'public',
+    contentType: params.mimeType,
+    addRandomSuffix: false,
+    token: config.storage.blobToken,
+  });
 
   const checksumSha256 = crypto.createHash('sha256').update(params.buffer).digest('hex');
 
   return prisma.storedFile.create({
     data: {
       firmId: params.firmId,
-      provider: 'LOCAL',
-      bucket: 'local',
-      key,
+      provider: 'VERCEL_BLOB',
+      bucket: 'vercel-blob',
+      // The blob's public URL is globally unique and permanent — stored
+      // directly as the key rather than reconstructed from a bucket+path
+      // pattern the way S3/local storage would be.
+      key: blob.url,
       originalName: params.originalName,
       mimeType: params.mimeType,
       sizeBytes: BigInt(params.buffer.byteLength),
@@ -53,15 +54,13 @@ export const saveLocalFile = async (params: SaveLocalFileParams): Promise<Stored
   });
 };
 
-/** Public URL for a StoredFile saved via saveLocalFile — served by the static /uploads route. */
-export const localFileUrl = (storedFile: Pick<StoredFile, 'provider' | 'key'>): string | null => {
-  if (storedFile.provider !== 'LOCAL') return null;
-  return `${config.appBaseUrl}/${config.upload.localDir}/${storedFile.key}`;
+/** Public URL for a StoredFile saved via saveFile. */
+export const fileUrl = (storedFile: Pick<StoredFile, 'provider' | 'key'>): string | null => {
+  if (storedFile.provider !== 'VERCEL_BLOB') return null;
+  return storedFile.key;
 };
 
-export const deleteLocalFile = (key: string): void => {
-  const filePath = path.join(uploadRoot, key);
-  if (fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
-  }
+export const deleteFile = async (storedFile: Pick<StoredFile, 'provider' | 'key'>): Promise<void> => {
+  if (storedFile.provider !== 'VERCEL_BLOB') return;
+  await del(storedFile.key, { token: config.storage.blobToken });
 };

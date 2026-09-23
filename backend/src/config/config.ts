@@ -11,9 +11,8 @@ const envVarsSchema = z.object({
     .refine((value) => value !== undefined, { message: 'NODE_ENV is required' })
     .default('development'),
   APP_INSTANCES: z.coerce.number().default(1),
-  PORT: z.coerce.number().default(8000),
+  PORT: z.coerce.number().default(8080),
   SENTRY_DSN: z.string().optional().describe('sentry dsn'),
-  REDIS_URL: z.string().optional().describe('redis url'),
   DATABASE_URL: z.string().describe('database connection string'),
 
   JWT_SECRET: z.string().min(16).describe('JWT secret key'),
@@ -65,7 +64,18 @@ const envVarsSchema = z.object({
     .min(32, 'BLIND_INDEX_PEPPER must be at least 32 characters')
     .describe('secret pepper for the HMAC blind index used to dedupe firm identity'),
 
-  LOCAL_UPLOAD_DIR: z.string().default('uploads').describe('local disk folder for uploaded files'),
+  BLOB_READ_WRITE_TOKEN: z
+    .string()
+    .optional()
+    .describe(
+      'Vercel Blob token for file uploads — create a store in the Vercel dashboard. ' +
+        'Optional so the app still boots without it; uploads fail with a clear error until it is set.'
+    ),
+
+  CORS_ALLOWED_ORIGINS: z
+    .string()
+    .default('http://localhost:3000,http://localhost:6767')
+    .describe('comma-separated list of frontend origins allowed to call this API'),
 
   PLATFORM_OWNER_EMAIL: z.string().email().describe('seed: platform owner login email'),
   PLATFORM_OWNER_PASSWORD: z.string().min(8).describe('seed: platform owner initial password'),
@@ -88,7 +98,6 @@ export default {
   appInstances: envVars.data.APP_INSTANCES,
   sentryDsn: envVars.data.SENTRY_DSN,
   port: envVars.data.PORT,
-  redisUrl: envVars.data.REDIS_URL,
   databaseUrl: envVars.data.DATABASE_URL,
   jwt: {
     secret: envVars.data.JWT_SECRET,
@@ -122,9 +131,12 @@ export default {
     encryptionKey: envVars.data.ENCRYPTION_KEY,
     blindIndexPepper: envVars.data.BLIND_INDEX_PEPPER,
   },
-  upload: {
-    localDir: envVars.data.LOCAL_UPLOAD_DIR,
+  storage: {
+    blobToken: envVars.data.BLOB_READ_WRITE_TOKEN,
   },
+  corsAllowedOrigins: envVars.data.CORS_ALLOWED_ORIGINS.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
   platformOwner: {
     email: envVars.data.PLATFORM_OWNER_EMAIL,
     password: envVars.data.PLATFORM_OWNER_PASSWORD,
