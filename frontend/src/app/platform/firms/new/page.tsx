@@ -33,7 +33,6 @@ interface OnboardResult {
 
 export default function NewFirmPage() {
   const [result, setResult] = useState<OnboardResult | null>(null);
-  const onboardFirm = useOnboardFirm();
 
   const form = useForm<OnboardFirmInput>({
     resolver: zodResolver(onboardFirmSchema),
@@ -61,6 +60,7 @@ export default function NewFirmPage() {
     },
   });
 
+  const onboardFirm = useOnboardFirm(form);
   const errors = form.formState.errors;
 
   const onSubmit = form.handleSubmit((values) => {
@@ -185,6 +185,7 @@ export default function NewFirmPage() {
                 placeholder="firm.example.com"
                 {...form.register('firm.domain')}
               />
+              <InputError message={errors.firm?.domain?.message} />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="firm.email">Business email</Label>
@@ -237,15 +238,19 @@ export default function NewFirmPage() {
               <Label htmlFor="firm.address.state">State</Label>
               <Input
                 id="firm.address.state"
+                placeholder="CA"
                 {...form.register('firm.address.state')}
               />
+              <InputError message={errors.firm?.address?.state?.message} />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="firm.address.postalCode">Postal code</Label>
               <Input
                 id="firm.address.postalCode"
+                placeholder="12345"
                 {...form.register('firm.address.postalCode')}
               />
+              <InputError message={errors.firm?.address?.postalCode?.message} />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="firm.address.country">Country</Label>

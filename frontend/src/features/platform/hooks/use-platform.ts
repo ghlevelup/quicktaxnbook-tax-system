@@ -4,6 +4,7 @@ import { useApiMutation } from '@/hooks/use-api-mutation';
 import { apiFetch } from '@/libs/api-client';
 import type { PaginatedResult } from '@/libs/types';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { UseFormReturn } from 'react-hook-form';
 
 import type { OnboardFirmInput } from '@/features/platform/schemas/onboard-firm';
 import type { FirmRecord, FirmStatus } from '@/features/platform/types';
@@ -35,14 +36,15 @@ interface OnboardFirmResult {
   temporaryPassword: string;
 }
 
-export function useOnboardFirm() {
+export function useOnboardFirm(form?: UseFormReturn<OnboardFirmInput>) {
   const queryClient = useQueryClient();
-  return useApiMutation<OnboardFirmResult, OnboardFirmInput>({
+  return useApiMutation<OnboardFirmResult, OnboardFirmInput, OnboardFirmInput>({
     mutationFn: (values) =>
       apiFetch('/platform/firms', {
         method: 'POST',
         body: blankToUndefined(values),
       }),
+    form,
     onSuccessData: () => {
       void queryClient.invalidateQueries({ queryKey: firmsKey() });
     },

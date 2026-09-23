@@ -1,7 +1,7 @@
 import { MemberStatus, StaffType } from '@prisma/client';
 import httpStatus from 'http-status';
 
-import prisma from '@/client';
+import prisma, { TX_OPTIONS } from '@/client';
 import { revokeAllSessionsForUser } from '@/shared/services/token.service';
 import ApiError from '@/shared/utils/api-error';
 import { generateRandomPassword, hashSecret } from '@/shared/utils/encryption';
@@ -63,24 +63,27 @@ export const createTeamMember = async (
   const passwordHash = await hashSecret(temporaryPassword);
 
   const member = await prisma.$transaction(async (tx) => {
-    const user = await tx.user.create({
-      data: {
-        email,
-        phone: input.phone,
-        firstName: input.firstName,
-        lastName: input.lastName,
-        displayName: `${input.firstName} ${input.lastName}`,
-        passwordHash,
-        accountRole: 'FIRM_TEAM',
-        status: 'ACTIVE',
-      },
-    });
-
-    const teamRole = await tx.role.upsert({
-      where: { firmId_key: { firmId, key: 'team' } },
-      update: {},
-      create: { firmId, key: 'team', name: 'Team', isSystem: true, permissions: [] },
-    });
+    // user creation and the team role only depend on `firmId`/inputs already
+    // known — run them concurrently instead of as 2 sequential round trips.
+    const [user, teamRole] = await Promise.all([
+      tx.user.create({
+        data: {
+          email,
+          phone: input.phone,
+          firstName: input.firstName,
+          lastName: input.lastName,
+          displayName: `${input.firstName} ${input.lastName}`,
+          passwordHash,
+          accountRole: 'FIRM_TEAM',
+          status: 'ACTIVE',
+        },
+      }),
+      tx.role.upsert({
+        where: { firmId_key: { firmId, key: 'team' } },
+        update: {},
+        create: { firmId, key: 'team', name: 'Team', isSystem: true, permissions: [] },
+      }),
+    ]);
 
     const createdMember = await tx.firmMember.create({
       data: {
@@ -99,7 +102,7 @@ export const createTeamMember = async (
     });
 
     return createdMember;
-  });
+  }, TX_OPTIONS);
 
   return { member, temporaryPassword };
 };

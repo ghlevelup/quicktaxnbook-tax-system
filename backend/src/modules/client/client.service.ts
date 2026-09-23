@@ -2,7 +2,7 @@ import { ClientStatus, ClientType } from '@prisma/client';
 import { add } from 'date-fns';
 import httpStatus from 'http-status';
 
-import prisma from '@/client';
+import prisma, { TX_OPTIONS } from '@/client';
 import config from '@/config/config';
 import logger from '@/config/logger';
 import { sendOnboardingLinkEmail } from '@/shared/services/email.service';
@@ -230,6 +230,9 @@ export const completeOnboarding = async (
   const passwordHash = await hashSecret(input.password);
   const einDigits = input.business?.ein ? normalizeDigits(input.business.ein) : undefined;
 
+  const businessAddress = isBusiness ? input.business?.address : undefined;
+  const hasAddress = !!businessAddress && Object.values(businessAddress).some(Boolean);
+
   const { user } = await prisma.$transaction(async (tx) => {
     const createdUser = await tx.user.create({
       data: {
@@ -245,62 +248,60 @@ export const completeOnboarding = async (
       },
     });
 
-    await tx.clientAccess.create({
-      data: {
-        clientId: link.clientId,
-        userId: createdUser.id,
-        accessLevel: 'OWNER',
-        isPrimary: true,
-        invitedAt: link.createdAt,
-        acceptedAt: new Date(),
-      },
-    });
-
-    await tx.client.update({
-      where: { id: link.clientId },
-      data: {
-        status: 'ACTIVE',
-        onboardedAt: new Date(),
-        ...(isBusiness
-          ? {
-              legalName: input.business?.legalName,
-              website: input.business?.website,
-              phone: input.business?.phone,
-              email: undefined, // business email stays whatever the admin set at creation
-              einEncrypted: einDigits ? encryptPII(einDigits) : undefined,
-              einLast4: einDigits ? lastDigits(einDigits) : undefined,
-            }
-          : { email, phone: input.phone }),
-      },
-    });
-
-    if (isBusiness && input.business?.address) {
-      const address = input.business.address;
-      const hasAddress = Object.values(address).some(Boolean);
-      if (hasAddress) {
-        await tx.address.create({
-          data: {
-            clientId: link.clientId,
-            type: 'BUSINESS',
-            line1: address.line1 || '',
-            line2: address.line2,
-            city: address.city || '',
-            state: address.state,
-            postalCode: address.postalCode,
-            country: address.country || 'US',
-            isPrimary: true,
-          },
-        });
-      }
-    }
-
-    await tx.onboardingLink.update({
-      where: { id: link.id },
-      data: { completedAt: new Date() },
-    });
+    // None of these depend on each other's result — only on createdUser.id
+    // (clientAccess) or values already known before the transaction started
+    // — so run them concurrently instead of as 4 sequential round trips.
+    await Promise.all([
+      tx.clientAccess.create({
+        data: {
+          clientId: link.clientId,
+          userId: createdUser.id,
+          accessLevel: 'OWNER',
+          isPrimary: true,
+          invitedAt: link.createdAt,
+          acceptedAt: new Date(),
+        },
+      }),
+      tx.client.update({
+        where: { id: link.clientId },
+        data: {
+          status: 'ACTIVE',
+          onboardedAt: new Date(),
+          ...(isBusiness
+            ? {
+                legalName: input.business?.legalName,
+                website: input.business?.website,
+                phone: input.business?.phone,
+                email: undefined, // business email stays whatever the admin set at creation
+                einEncrypted: einDigits ? encryptPII(einDigits) : undefined,
+                einLast4: einDigits ? lastDigits(einDigits) : undefined,
+              }
+            : { email, phone: input.phone }),
+        },
+      }),
+      hasAddress
+        ? tx.address.create({
+            data: {
+              clientId: link.clientId,
+              type: 'BUSINESS',
+              line1: businessAddress?.line1 || '',
+              line2: businessAddress?.line2,
+              city: businessAddress?.city || '',
+              state: businessAddress?.state,
+              postalCode: businessAddress?.postalCode,
+              country: businessAddress?.country || 'US',
+              isPrimary: true,
+            },
+          })
+        : Promise.resolve(),
+      tx.onboardingLink.update({
+        where: { id: link.id },
+        data: { completedAt: new Date() },
+      }),
+    ]);
 
     return { user: createdUser };
-  });
+  }, TX_OPTIONS);
 
   const tokens = await createSession(user, {
     firmId: link.client.firmId,

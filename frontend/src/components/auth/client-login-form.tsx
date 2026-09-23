@@ -138,6 +138,7 @@ const ClientLoginForm = () => {
         },
       );
       queryClient.setQueryData(['auth', 'me'], data.user);
+      toast.success(`Welcome back, ${data.user.firstName || 'there'}!`);
       router.replace(roleHomePath(data.user));
       router.refresh();
     } catch (error) {

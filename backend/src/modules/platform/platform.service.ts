@@ -1,7 +1,7 @@
 import { FirmStatus } from '@prisma/client';
 import httpStatus from 'http-status';
 
-import prisma from '@/client';
+import prisma, { TX_OPTIONS } from '@/client';
 import config from '@/config/config';
 import logger from '@/config/logger';
 import { sendFirmAdminWelcomeEmail } from '@/shared/services/email.service';
@@ -150,30 +150,33 @@ export const onboardFirm = async (input: OnboardFirmInput, platformOwnerId: stri
       },
     });
 
-    const owner = await tx.user.create({
-      data: {
-        email: ownerEmail,
-        phone: input.owner.phone,
-        firstName: input.owner.firstName,
-        lastName: input.owner.lastName,
-        displayName: `${input.owner.firstName} ${input.owner.lastName}`,
-        passwordHash,
-        accountRole: 'FIRM_ADMIN',
-        status: 'ACTIVE',
-      },
-    });
-
-    const adminRole = await tx.role.upsert({
-      where: { firmId_key: { firmId: firm.id, key: 'admin' } },
-      update: {},
-      create: {
-        firmId: firm.id,
-        key: 'admin',
-        name: 'Admin',
-        isSystem: true,
-        permissions: [],
-      },
-    });
+    // owner creation and the admin role only depend on `firm`, not on each
+    // other — run them concurrently to shave a round trip off the transaction.
+    const [owner, adminRole] = await Promise.all([
+      tx.user.create({
+        data: {
+          email: ownerEmail,
+          phone: input.owner.phone,
+          firstName: input.owner.firstName,
+          lastName: input.owner.lastName,
+          displayName: `${input.owner.firstName} ${input.owner.lastName}`,
+          passwordHash,
+          accountRole: 'FIRM_ADMIN',
+          status: 'ACTIVE',
+        },
+      }),
+      tx.role.upsert({
+        where: { firmId_key: { firmId: firm.id, key: 'admin' } },
+        update: {},
+        create: {
+          firmId: firm.id,
+          key: 'admin',
+          name: 'Admin',
+          isSystem: true,
+          permissions: [],
+        },
+      }),
+    ]);
 
     const member = await tx.firmMember.create({
       data: {
@@ -191,7 +194,7 @@ export const onboardFirm = async (input: OnboardFirmInput, platformOwnerId: stri
     });
 
     return { firm, owner };
-  });
+  }, TX_OPTIONS);
 
   // Fire-and-forget: the firm/owner records are already committed, so a slow
   // or unreachable SMTP server must not stall this request.

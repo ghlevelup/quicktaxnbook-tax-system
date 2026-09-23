@@ -28,7 +28,12 @@ import { ApiError, onboardingFetch } from '@/libs/api-client';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Controller, useForm } from 'react-hook-form';
+import {
+  Controller,
+  useForm,
+  type FieldValues,
+  type UseFormReturn,
+} from 'react-hook-form';
 
 interface OnboardingLinkInfo {
   firmName: string;
@@ -109,13 +114,17 @@ export function OnboardingForm({ token }: { token: string }) {
   );
 }
 
-function useOnboardingComplete<T>(token: string) {
+function useOnboardingComplete<T extends FieldValues>(
+  token: string,
+  form?: UseFormReturn<T>,
+) {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  return useApiMutation<{ user: CurrentUser }, T, never>({
+  return useApiMutation<{ user: CurrentUser }, T, T>({
     mutationFn: (values) =>
       onboardingFetch(`/${token}/complete`, { method: 'POST', body: values }),
+    form,
     successMessage: 'Welcome! Your account is ready.',
     onSuccessData: (data) => {
       queryClient.setQueryData(['auth', 'me'], data.user);
@@ -215,8 +224,6 @@ function BusinessOnboardingForm({
   token: string;
   info: OnboardingLinkInfo;
 }) {
-  const mutation = useOnboardingComplete<BusinessOnboardingInput>(token);
-
   const form = useForm<BusinessOnboardingInput>({
     resolver: zodResolver(businessOnboardingSchema),
     defaultValues: {
@@ -241,6 +248,8 @@ function BusinessOnboardingForm({
       password: '',
     },
   });
+
+  const mutation = useOnboardingComplete<BusinessOnboardingInput>(token, form);
 
   const errors = form.formState.errors;
 
@@ -320,14 +329,20 @@ function BusinessOnboardingForm({
               <Label htmlFor="business.address.state">State</Label>
               <Input
                 id="business.address.state"
+                placeholder="CA"
                 {...form.register('business.address.state')}
               />
+              <InputError message={errors.business?.address?.state?.message} />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="business.address.postalCode">ZIP</Label>
               <Input
                 id="business.address.postalCode"
+                placeholder="12345"
                 {...form.register('business.address.postalCode')}
+              />
+              <InputError
+                message={errors.business?.address?.postalCode?.message}
               />
             </div>
           </div>

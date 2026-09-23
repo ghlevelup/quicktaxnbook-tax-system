@@ -1,7 +1,13 @@
 import { z } from 'zod';
 
-const einPattern = /^\d{2}-?\d{7}$/;
-const ssnPattern = /^\d{3}-?\d{2}-?\d{4}$/;
+import {
+  DOMAIN_PATTERN,
+  EIN_PATTERN,
+  SSN_PATTERN,
+  isValidEinStructure,
+  isValidSsnStructure,
+  validateUsAddress,
+} from '@/libs/validation-patterns';
 
 export const onboardFirmSchema = z
   .object({
@@ -11,9 +17,10 @@ export const onboardFirmSchema = z
       ein: z
         .string()
         .optional()
+        .refine((v) => !v || EIN_PATTERN.test(v), 'EIN must look like 12-3456789')
         .refine(
-          (v) => !v || einPattern.test(v),
-          'EIN must look like 12-3456789',
+          (v) => !v || isValidEinStructure(v),
+          'That EIN is not a valid IRS-issued number',
         ),
       licenseNumber: z.string().optional().or(z.literal('')),
       licenseType: z.string().optional().or(z.literal('')),
@@ -21,7 +28,13 @@ export const onboardFirmSchema = z
         .string()
         .optional()
         .refine((v) => !v || z.url().safeParse(v).success, 'Enter a valid URL'),
-      domain: z.string().optional().or(z.literal('')),
+      domain: z
+        .string()
+        .optional()
+        .refine(
+          (v) => !v || DOMAIN_PATTERN.test(v),
+          'Enter a valid domain, e.g. acme or portal.acme.com',
+        ),
       email: z.email('Enter a valid email').optional().or(z.literal('')),
       phone: z.string().optional().or(z.literal('')),
       address: z.object({
@@ -41,9 +54,10 @@ export const onboardFirmSchema = z
       ssn: z
         .string()
         .optional()
+        .refine((v) => !v || SSN_PATTERN.test(v), 'SSN must look like 123-45-6789')
         .refine(
-          (v) => !v || ssnPattern.test(v),
-          'SSN must look like 123-45-6789',
+          (v) => !v || isValidSsnStructure(v),
+          'That SSN is not a valid Social Security number',
         ),
     }),
   })
@@ -56,6 +70,7 @@ export const onboardFirmSchema = z
         path: ['firm', 'ein'],
       });
     }
+    validateUsAddress(data.firm.address, ctx, ['firm', 'address']);
   });
 
 export type OnboardFirmInput = z.infer<typeof onboardFirmSchema>;

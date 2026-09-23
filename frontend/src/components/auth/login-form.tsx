@@ -22,6 +22,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { toast } from 'sonner';
 
 const LoginForm = () => {
   const router = useRouter();
@@ -41,6 +42,7 @@ const LoginForm = () => {
         body: values,
       });
       queryClient.setQueryData(['auth', 'me'], data.user);
+      toast.success(`Welcome back, ${data.user.firstName || 'there'}!`);
       router.replace(roleHomePath(data.user));
       router.refresh();
     } catch (error) {
