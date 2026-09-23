@@ -76,7 +76,7 @@
     "name": "Qicktaxnbook365",
     "legalName": "Qicktaxnbook365",
     "url": "https://qicktaxnbook365.com",
-    "logo": "/logo.svg",
+    "logo": "/logo.png",
     "description": "Multi-tenant tax practice management platform.",
     "foundingDate": "2026-01-01",
     "email": "support@qicktaxnbook365.com",
@@ -98,7 +98,7 @@
   "social": {},
   "images": {
     "og": "/icon.svg",
-    "logo": "/logo.svg",
+    "logo": "/logo.png",
     "ogWidth": 1200,
     "ogHeight": 630
   },
