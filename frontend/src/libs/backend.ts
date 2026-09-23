@@ -15,9 +15,14 @@ export interface BackendEnvelope<T = unknown> {
   errors?: BackendFieldError[];
 }
 
+// Without this, a stalled Express request (e.g. blocked on a slow downstream
+// call) hangs this fetch indefinitely, which hangs the Next route handler,
+// which hangs the browser's spinner forever with no error ever surfacing.
+const BACKEND_TIMEOUT_MS = 25_000;
+
 /** Server-only fetch against the Express API. Never throws — network/parse
- * failures are normalized into a synthetic envelope so callers have one shape
- * to handle. */
+ * failures (including timeouts) are normalized into a synthetic envelope so
+ * callers have one shape to handle. */
 export async function backendFetch<T = unknown>(
   path: string,
   init: RequestInit = {},
@@ -26,6 +31,7 @@ export async function backendFetch<T = unknown>(
     const res = await fetch(`${env.EXPRESS_API_URL}${path}`, {
       ...init,
       cache: 'no-store',
+      signal: AbortSignal.timeout(BACKEND_TIMEOUT_MS),
     });
     const body = (await res
       .json()

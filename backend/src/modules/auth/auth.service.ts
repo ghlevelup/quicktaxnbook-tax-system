@@ -3,6 +3,7 @@ import httpStatus from 'http-status';
 
 import prisma from '@/client';
 import config from '@/config/config';
+import logger from '@/config/logger';
 import { sendOtpEmail, sendPasswordResetOtpEmail } from '@/shared/services/email.service';
 import { createOtpChallenge, verifyOtpChallenge } from '@/shared/services/otp.service';
 import {
@@ -156,7 +157,12 @@ export const clientLoginPassword = async (
     ipAddress: meta.ipAddress,
   });
 
-  await sendOtpEmail(user.email as string, code, expiresInMinutes);
+  // Fire-and-forget: the OTP challenge is already persisted, so the login
+  // flow must not stall on SMTP latency/outages. A failed send is logged and
+  // surfaces to the user as an expired/never-arriving code, not a hung request.
+  sendOtpEmail(user.email as string, code, expiresInMinutes).catch((error) => {
+    logger.error('Failed to send login OTP email: %s', (error as Error).message);
+  });
 
   const loginToken = signPurposeToken(
     { sub: user.id, purpose: CLIENT_LOGIN_PURPOSE, challengeId },
@@ -236,11 +242,15 @@ export const forgotPassword = async (
       ipAddress: meta.ipAddress,
     });
     challengeId = challenge.challengeId;
-    await sendPasswordResetOtpEmail(
+    // Fire-and-forget for the same reason as the login OTP above — don't let
+    // SMTP latency hang this request once the challenge is already persisted.
+    sendPasswordResetOtpEmail(
       user!.email as string,
       challenge.code,
       challenge.expiresInMinutes
-    );
+    ).catch((error) => {
+      logger.error('Failed to send password reset OTP email: %s', (error as Error).message);
+    });
   }
 
   const resetToken = signPurposeToken(

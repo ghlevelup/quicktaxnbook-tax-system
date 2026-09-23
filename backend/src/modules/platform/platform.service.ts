@@ -3,6 +3,7 @@ import httpStatus from 'http-status';
 
 import prisma from '@/client';
 import config from '@/config/config';
+import logger from '@/config/logger';
 import { sendFirmAdminWelcomeEmail } from '@/shared/services/email.service';
 import { revokeAllSessionsForUser } from '@/shared/services/token.service';
 import ApiError from '@/shared/utils/api-error';
@@ -192,7 +193,13 @@ export const onboardFirm = async (input: OnboardFirmInput, platformOwnerId: stri
     return { firm, owner };
   });
 
-  await sendFirmAdminWelcomeEmail(ownerEmail, result.firm.name, `${config.clientPortalUrl}/login`);
+  // Fire-and-forget: the firm/owner records are already committed, so a slow
+  // or unreachable SMTP server must not stall this request.
+  sendFirmAdminWelcomeEmail(ownerEmail, result.firm.name, `${config.clientPortalUrl}/login`).catch(
+    (error) => {
+      logger.error('Failed to send firm admin welcome email: %s', (error as Error).message);
+    }
+  );
 
   return {
     firm: await prisma.firm.findUniqueOrThrow({

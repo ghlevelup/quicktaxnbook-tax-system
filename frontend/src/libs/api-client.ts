@@ -30,25 +30,39 @@ interface ApiFetchOptions {
   isFormData?: boolean;
 }
 
+// Without this, a stalled proxy/backend request leaves this fetch pending
+// forever, which leaves the caller's loading state stuck forever with no
+// error ever surfacing to the user.
+const REQUEST_TIMEOUT_MS = 30_000;
+
 async function request<T>(
   basePath: string,
   path: string,
   { method = 'GET', body, isFormData = false }: ApiFetchOptions,
 ): Promise<{ message: string; data: T }> {
-  const res = await fetch(`${basePath}${path}`, {
-    method,
-    credentials: 'same-origin',
-    headers:
-      isFormData || body === undefined
-        ? undefined
-        : { 'content-type': 'application/json' },
-    body:
-      body === undefined
-        ? undefined
-        : isFormData
-          ? (body as FormData)
-          : JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${basePath}${path}`, {
+      method,
+      credentials: 'same-origin',
+      headers:
+        isFormData || body === undefined
+          ? undefined
+          : { 'content-type': 'application/json' },
+      body:
+        body === undefined
+          ? undefined
+          : isFormData
+            ? (body as FormData)
+            : JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw new ApiError('The request timed out. Please try again.', 504);
+    }
+    throw new ApiError('Could not reach the server. Please check your connection.', 0);
+  }
 
   const json = (await res.json().catch(() => null)) as ApiEnvelope<T> | null;
 

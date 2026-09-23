@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
 import { password } from '@/modules/auth/auth.validation';
+import { normalizeDigits } from '@/shared/utils/encryption';
+import {
+  EIN_PATTERN,
+  isValidEinStructure,
+  validateUsAddress,
+} from '@/shared/utils/validation-patterns';
 
 export const createClientSchema = z.object({
   body: z
@@ -55,23 +61,34 @@ const onboardingAddressSchema = z.object({
 
 export const completeOnboardingSchema = z.object({
   params: z.object({ token: z.string() }),
-  body: z.object({
-    firstName: z.string().min(1),
-    lastName: z.string().min(1),
-    email: z.string().email(),
-    phone: z.string().min(7),
-    password,
-    // Present only when the client is a business/trust/nonprofit — validated
-    // against the client's actual type in the service layer, since the type
-    // lives on the Client record, not in this request.
-    business: z
-      .object({
-        legalName: z.string().min(1),
-        ein: z.string().optional(),
-        website: z.string().url().optional(),
-        phone: z.string().optional(),
-        address: onboardingAddressSchema.optional(),
-      })
-      .optional(),
-  }),
+  body: z
+    .object({
+      firstName: z.string().min(1),
+      lastName: z.string().min(1),
+      email: z.string().email(),
+      phone: z.string().min(7),
+      password,
+      // Present only when the client is a business/trust/nonprofit — validated
+      // against the client's actual type in the service layer, since the type
+      // lives on the Client record, not in this request.
+      business: z
+        .object({
+          legalName: z.string().min(1),
+          ein: z
+            .string()
+            .regex(EIN_PATTERN, 'EIN must look like 12-3456789')
+            .refine(
+              (v) => isValidEinStructure(normalizeDigits(v)),
+              'That EIN is not a valid IRS-issued number'
+            )
+            .optional(),
+          website: z.string().url().optional(),
+          phone: z.string().optional(),
+          address: onboardingAddressSchema.optional(),
+        })
+        .optional(),
+    })
+    .superRefine((data, ctx) => {
+      validateUsAddress(data.business?.address, ctx, ['business', 'address']);
+    }),
 });

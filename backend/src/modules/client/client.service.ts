@@ -4,6 +4,7 @@ import httpStatus from 'http-status';
 
 import prisma from '@/client';
 import config from '@/config/config';
+import logger from '@/config/logger';
 import { sendOnboardingLinkEmail } from '@/shared/services/email.service';
 import { createSession } from '@/shared/services/token.service';
 import ApiError from '@/shared/utils/api-error';
@@ -125,7 +126,11 @@ export const createOnboardingLink = async (
   const onboardingUrl = `${config.clientPortalUrl}/onboard/${rawToken}`;
 
   if (client.email) {
-    await sendOnboardingLinkEmail(client.email, firm.name, onboardingUrl);
+    // Fire-and-forget: the onboarding link is already persisted, so a slow
+    // or unreachable SMTP server must not stall this request.
+    sendOnboardingLinkEmail(client.email, firm.name, onboardingUrl).catch((error) => {
+      logger.error('Failed to send onboarding link email: %s', (error as Error).message);
+    });
   }
 
   return { onboardingUrl, expiresAt };

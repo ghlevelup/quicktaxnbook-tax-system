@@ -1,7 +1,14 @@
 import { z } from 'zod';
 
-const einPattern = /^\d{2}-?\d{7}$/;
-const ssnPattern = /^\d{3}-?\d{2}-?\d{4}$/;
+import {
+  DOMAIN_PATTERN,
+  EIN_PATTERN,
+  SSN_PATTERN,
+  isValidEinStructure,
+  isValidSsnStructure,
+  validateUsAddress,
+} from '@/shared/utils/validation-patterns';
+import { normalizeDigits } from '@/shared/utils/encryption';
 
 export const onboardFirmSchema = z.object({
   body: z
@@ -9,11 +16,21 @@ export const onboardFirmSchema = z.object({
       firm: z.object({
         legalName: z.string().min(1, 'Legal business name is required'),
         displayName: z.string().min(1).optional(),
-        ein: z.string().regex(einPattern, 'EIN must look like 12-3456789').optional(),
+        ein: z
+          .string()
+          .regex(EIN_PATTERN, 'EIN must look like 12-3456789')
+          .refine(
+            (v) => isValidEinStructure(normalizeDigits(v)),
+            'That EIN is not a valid IRS-issued number'
+          )
+          .optional(),
         licenseNumber: z.string().optional(),
         licenseType: z.string().optional(),
         website: z.string().url().optional(),
-        domain: z.string().optional(),
+        domain: z
+          .string()
+          .regex(DOMAIN_PATTERN, 'Enter a valid domain, e.g. acme or portal.acme.com')
+          .optional(),
         email: z.string().email().optional(),
         phone: z.string().optional(),
         address: z
@@ -32,7 +49,14 @@ export const onboardFirmSchema = z.object({
         lastName: z.string().min(1, "Owner's last name is required"),
         email: z.string().email(),
         phone: z.string().optional(),
-        ssn: z.string().regex(ssnPattern, 'SSN must look like 123-45-6789').optional(),
+        ssn: z
+          .string()
+          .regex(SSN_PATTERN, 'SSN must look like 123-45-6789')
+          .refine(
+            (v) => isValidSsnStructure(normalizeDigits(v)),
+            'That SSN is not a valid Social Security number'
+          )
+          .optional(),
       }),
     })
     .superRefine((data, ctx) => {
@@ -44,6 +68,7 @@ export const onboardFirmSchema = z.object({
           path: ['firm', 'ein'],
         });
       }
+      validateUsAddress(data.firm.address, ctx, ['firm', 'address']);
     }),
 });
 
