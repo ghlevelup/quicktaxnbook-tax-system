@@ -1,0 +1,3117 @@
+// =============================================================================
+// Qicktaxnbook365 · Tax Practice Platform · Prisma Schema (PostgreSQL)
+// -----------------------------------------------------------------------------
+// Design rules
+//  1. Multi-tenant: every top-level business table carries `firmId` (FR-4).
+//     Child tables (versions, line items, signers, events) inherit tenancy
+//     through their parent. Enforce with Postgres RLS + a Prisma extension
+//     that injects `firmId` on every query.
+//  2. The Case (client + tax year + return type) is the central container.
+//     Reassignment only moves an owner pointer; history lives in
+//     CaseAssignment + CaseStageHistory + AuditLog (FR-8).
+//  3. Nothing business-critical is hard-deleted: `deletedAt` soft deletes.
+//  4. Money for billing = integer cents (Stripe native).
+//     Tax figures = Decimal(14,2).
+//  5. PII (SSN/EIN, OAuth tokens, TOTP secrets) stored app-level encrypted
+//     in `*Encrypted` columns. Only last-4 stored in clear.
+//  6. Tables/fields marked "LATER" are scaffolding for roadmap features and
+//     are optional/nullable so they cost nothing until used.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum FirmStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  CANCELLED
+}
+
+/// Top-level account discriminator. Set once at creation, single source of truth
+/// for what a User is — never inferred from which relations happen to exist.
+enum AccountRole {
+  PLATFORM_OWNER // operates/sells the platform; not tied to any Firm
+  FIRM_ADMIN // owns a Firm's account (FirmMember.isOwner = true)
+  FIRM_TEAM // works inside a Firm (FirmMember)
+  FIRM_CLIENT // taxpayer using a Firm's client portal (ClientAccess)
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  LOCKED
+  DISABLED
+}
+
+enum MemberStatus {
+  INVITED
+  ACTIVE
+  DEACTIVATED
+}
+
+enum StaffType {
+  PREPARER
+  REVIEWER
+  SUPPORT
+  MANAGER
+  OWNER
+}
+
+enum CaseVisibility {
+  ASSIGNED_ONLY
+  ALL_TEAM
+}
+
+enum OtpChannel {
+  EMAIL
+  SMS
+}
+
+enum OtpPurpose {
+  LOGIN
+  MFA
+  SIGNATURE
+  VERIFY_EMAIL
+  VERIFY_PHONE
+}
+
+enum MfaType {
+  TOTP
+  SMS
+  WEBAUTHN
+}
+
+enum VerificationTokenType {
+  PASSWORD_RESET
+  EMAIL_VERIFY
+  MAGIC_LINK
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum OnboardingLinkType {
+  NEW_CLIENT
+  RETURNING_CLIENT
+}
+
+enum ClientType {
+  INDIVIDUAL
+  BUSINESS
+  TRUST_ESTATE
+  NONPROFIT
+}
+
+enum ClientStatus {
+  PROSPECT
+  ONBOARDING
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum BusinessEntityType {
+  SOLE_PROP
+  SINGLE_MEMBER_LLC
+  PARTNERSHIP
+  S_CORP
+  C_CORP
+  TRUST
+  ESTATE
+  NONPROFIT
+  OTHER
+}
+
+enum FilingStatus {
+  SINGLE
+  MARRIED_FILING_JOINTLY
+  MARRIED_FILING_SEPARATELY
+  HEAD_OF_HOUSEHOLD
+  QUALIFYING_SURVIVING_SPOUSE
+}
+
+enum ClientAccessLevel {
+  OWNER
+  FULL
+  VIEW_ONLY
+  SIGNER_ONLY
+}
+
+enum ClientPersonRole {
+  PRIMARY
+  SPOUSE
+  DEPENDENT
+  OFFICER
+  PARTNER
+  AUTHORIZED_CONTACT
+}
+
+enum AddressType {
+  HOME
+  MAILING
+  BUSINESS
+  OTHER
+}
+
+enum ReturnType {
+  FORM_1040
+  FORM_1040X
+  FORM_1040NR
+  FORM_1065
+  FORM_1120
+  FORM_1120S
+  FORM_1041
+  FORM_990
+  FORM_706
+  FORM_709
+  STATE_ONLY
+  BOOKKEEPING
+  OTHER
+}
+
+enum CaseStatus {
+  OPEN
+  ON_HOLD
+  FINAL
+  ARCHIVED
+  CANCELLED
+}
+
+enum CasePriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum StageCategory {
+  INTAKE
+  DOCUMENTS
+  PREPARATION
+  REVIEW
+  CLIENT_APPROVAL
+  SIGNING
+  FILING
+  COMPLETED
+}
+
+enum AssignmentRole {
+  PREPARER
+  REVIEWER
+  SUPPORT
+}
+
+enum DocumentRequestStatus {
+  REQUIRED
+  MISSING
+  UPLOADED
+  RECEIVED
+  REJECTED
+  WAIVED
+}
+
+enum DocumentKind {
+  CLIENT_SOURCE
+  TEAM_UPLOAD
+  DRAFT_RETURN
+  FINAL_RETURN
+  SIGNED_DOCUMENT
+  SIGNATURE_CERTIFICATE
+  ENGAGEMENT_LETTER
+  INVOICE_PDF
+  RECEIPT
+  CORRESPONDENCE
+  OTHER
+}
+
+enum DocumentVisibility {
+  CLIENT_VISIBLE
+  INTERNAL
+}
+
+enum UploadChannel {
+  PORTAL
+  TEAM
+  EMAIL
+  SMS
+  VOICE_AI
+  SYSTEM
+  IMPORT
+}
+
+enum StorageProvider {
+  S3
+  R2
+  GCS
+  AZURE
+  LOCAL
+}
+
+enum VirusScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+  FAILED
+  SKIPPED
+}
+
+enum DraftStatus {
+  UPLOADED
+  SENT_TO_CLIENT
+  CHANGES_REQUESTED
+  APPROVED
+  SUPERSEDED
+}
+
+enum DraftCommentAction {
+  COMMENT
+  REQUEST_CHANGES
+  APPROVE
+}
+
+enum ReturnSummaryType {
+  DRAFT
+  FINAL
+}
+
+enum ExtractionMethod {
+  MANUAL
+  OCR
+  PARSER
+  AI
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum EFileStatus {
+  NOT_STARTED
+  READY
+  TRANSMITTED
+  ACCEPTED
+  REJECTED
+  PAPER_FILED
+}
+
+enum SignatureDocKind {
+  ENGAGEMENT_LETTER
+  FORM_8879
+  FORM_8878
+  CONSENT_7216
+  POWER_OF_ATTORNEY
+  CUSTOM
+}
+
+enum SignatureRequestStatus {
+  DRAFT
+  SENT
+  VIEWED
+  PARTIALLY_SIGNED
+  COMPLETED
+  DECLINED
+  EXPIRED
+  VOIDED
+}
+
+enum SignatureSessionType {
+  SINGLE
+  JOINT
+}
+
+enum SignerRole {
+  TAXPAYER
+  SPOUSE
+  OFFICER
+  PREPARER
+  WITNESS
+}
+
+enum SignerStatus {
+  PENDING
+  VIEWED
+  SIGNED
+  DECLINED
+}
+
+enum SignatureEventType {
+  CREATED
+  SENT
+  EMAIL_OPENED
+  VIEWED
+  IDENTITY_VERIFIED
+  SIGNED
+  DECLINED
+  REMINDED
+  EXPIRED
+  VOIDED
+  COMPLETED
+}
+
+enum SignatureAuthMethod {
+  PORTAL_SESSION
+  EMAIL_OTP
+  SMS_OTP
+  KBA
+}
+
+enum StripeAccountType {
+  STANDARD
+  EXPRESS
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  VIEWED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+  REFUNDED
+  UNCOLLECTIBLE
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+  DISPUTED
+}
+
+enum PaymentMethodType {
+  CARD
+  ACH
+  APPLE_PAY
+  GOOGLE_PAY
+  CASH
+  CHECK
+  OTHER
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum TaskSource {
+  MANUAL
+  TEMPLATE
+  AUTOMATION
+  VOICE_AI
+  CLIENT_REQUEST
+}
+
+enum ThreadType {
+  CLIENT
+  INTERNAL
+}
+
+enum MessageAuthorType {
+  CLIENT
+  TEAM
+  SYSTEM
+  VOICE_AI
+}
+
+enum MessageChannel {
+  PORTAL
+  EMAIL
+  SMS
+  VOICE
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  RESCHEDULED
+}
+
+enum AppointmentLocationType {
+  IN_PERSON
+  PHONE
+  VIDEO
+}
+
+enum BookingSource {
+  PORTAL
+  TEAM
+  VOICE_AI
+  EXTERNAL
+}
+
+enum AttendeeResponse {
+  PENDING
+  ACCEPTED
+  DECLINED
+  TENTATIVE
+}
+
+enum CalendarProvider {
+  GOOGLE
+  MICROSOFT
+  APPLE
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  IN_APP
+  PUSH
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  OPENED
+  FAILED
+  BOUNCED
+  SUPPRESSED
+}
+
+enum ReminderTarget {
+  DOCUMENT_REQUEST
+  SIGNATURE_REQUEST
+  INVOICE
+  DRAFT_REVIEW
+  APPOINTMENT
+  TASK
+}
+
+enum ReminderStatus {
+  SCHEDULED
+  SENT
+  SKIPPED
+  CANCELLED
+  FAILED
+}
+
+enum AutomationTrigger {
+  STAGE_ENTERED
+  STAGE_EXITED
+  CASE_CREATED
+  ALL_DOCUMENTS_RECEIVED
+  DOCUMENT_UPLOADED
+  DRAFT_UPLOADED
+  DRAFT_APPROVED
+  DRAFT_CHANGES_REQUESTED
+  ALL_SIGNATURES_COMPLETED
+  INVOICE_PAID
+  TASKS_COMPLETED
+  CALL_COMPLETED
+  SCHEDULED
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum CallStatus {
+  RINGING
+  IN_PROGRESS
+  COMPLETED
+  MISSED
+  VOICEMAIL
+  FAILED
+  ESCALATED
+}
+
+enum FollowUpStatus {
+  NONE
+  PENDING
+  TASK_CREATED
+  RESOLVED
+}
+
+enum PhoneNumberPurpose {
+  VOICE_AI
+  SMS
+  VOICE_AND_SMS
+}
+
+enum ReportType {
+  FIRM_SNAPSHOT
+  WORKLOAD
+  PIPELINE
+  REVENUE
+  OVERDUE
+  TAX_FIGURES
+  CUSTOM
+}
+
+enum ReportFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  CUSTOM_CRON
+}
+
+enum ImportType {
+  CLIENTS
+  CASES
+  TEAM
+}
+
+enum ImportStatus {
+  UPLOADED
+  MAPPING
+  VALIDATING
+  VALIDATED
+  COMMITTING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ImportRowStatus {
+  PENDING
+  VALID
+  INVALID
+  IMPORTED
+  SKIPPED
+}
+
+enum ActorType {
+  USER
+  CLIENT
+  SYSTEM
+  VOICE_AI
+  API
+  WEBHOOK
+}
+
+enum IntegrationProvider {
+  STRIPE
+  TWILIO
+  SENDGRID
+  POSTMARK
+  AWS_SES
+  DOCUSIGN
+  DROPBOX_SIGN
+  GOOGLE_CALENDAR
+  MICROSOFT_CALENDAR
+  VOICE_AI_PROVIDER
+  OCR_PROVIDER
+  TAX_SOFTWARE
+  OTHER
+}
+
+enum IntegrationStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+  PENDING
+}
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  UNPAID
+  PAUSED
+}
+
+enum BillingInterval {
+  MONTH
+  YEAR
+}
+
+enum UsageMetric {
+  EMAIL_SENT
+  SMS_SENT
+  VOICE_MINUTES
+  STORAGE_BYTES
+  OCR_PAGES
+  SIGNATURES
+  ACTIVE_CASES
+}
+
+enum CustomFieldEntity {
+  CLIENT
+  CASE
+  TASK
+}
+
+enum CustomFieldType {
+  TEXT
+  NUMBER
+  DATE
+  BOOLEAN
+  SELECT
+  MULTI_SELECT
+  CURRENCY
+}
+
+enum NoteEntity {
+  CLIENT
+  CASE
+}
+
+// =============================================================================
+// 1. TENANCY / FIRM
+// =============================================================================
+
+model Firm {
+  id           String     @id @default(cuid())
+  name         String
+  legalName    String?
+  slug         String     @unique
+  einEncrypted String?
+  einLast4     String?
+  website      String?
+  domain       String? // vanity subdomain/custom domain requested at onboarding (see FirmDomain for verified custom domains)
+  email        String?
+  phone        String?
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  postalCode   String?
+  country      String     @default("US")
+  timezone     String     @default("America/New_York")
+  locale       String     @default("en-US")
+  currency     String     @default("USD")
+  status       FirmStatus @default(TRIAL)
+
+  // Responsible-party identity (the person accountable for this firm/agency).
+  // EIN + SSN combined form the uniqueness key so the same business/person can
+  // never be onboarded twice, even if one of the two isn't available.
+  licenseNumber     String? // CTEC/EA/CPA/state business license, if any
+  licenseType       String? // free text: "CTEC", "EA", "CPA", "STATE_BUSINESS", ...
+  ownerSsnEncrypted String? // AES-256-GCM encrypted
+  ownerSsnLast4     String?
+  identityHash      String? @unique // HMAC-SHA256(pepper, normalized EIN/SSN) blind index — dedup key
+
+  createdByPlatformAdminId String?
+  createdByPlatformAdmin   User?   @relation("FirmOnboardedBy", fields: [createdByPlatformAdminId], references: [id], onDelete: SetNull)
+
+  metadata  Json?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  branding      FirmBranding?
+  settings      FirmSettings?
+  subscription  FirmSubscription?
+  stripeAccount StripeAccount?
+  voiceAgent    VoiceAgentConfig?
+
+  domains               FirmDomain[]
+  sequences             FirmSequence[]
+  featureFlags          FirmFeatureFlag[]
+  members               FirmMember[]
+  roles                 Role[]
+  invitations           Invitation[]
+  onboardingLinks       OnboardingLink[]
+  sessions              Session[]
+  clients               Client[]
+  cases                 Case[]
+  engagementTypes       EngagementType[]
+  pipelines             Pipeline[]
+  automationRules       AutomationRule[]
+  files                 StoredFile[]
+  documentCategories    DocumentCategory[]
+  documentRequests      DocumentRequest[]
+  documents             Document[]
+  docRequestTemplates   DocumentRequestTemplate[]
+  returnDrafts          ReturnDraft[]
+  returnSummaries       ReturnSummary[]
+  extractionJobs        ExtractionJob[]
+  eFilings              EFiling[]
+  signatureTemplates    SignatureTemplate[]
+  signatureRequests     SignatureRequest[]
+  serviceItems          ServiceItem[]
+  invoices              Invoice[]
+  payments              Payment[]
+  tasks                 Task[]
+  taskTemplates         TaskTemplate[]
+  messageThreads        MessageThread[]
+  messages              Message[]
+  appointmentTypes      AppointmentType[]
+  appointments          Appointment[]
+  notificationTemplates NotificationTemplate[]
+  notifications         Notification[]
+  reminderRules         ReminderRule[]
+  reminders             Reminder[]
+  phoneNumbers          PhoneNumber[]
+  callLogs              CallLog[]
+  reportSchedules       ReportSchedule[]
+  reportRuns            ReportRun[]
+  importJobs            ImportJob[]
+  auditLogs             AuditLog[]
+  integrations          Integration[]
+  webhookEndpoints      WebhookEndpoint[]
+  apiKeys               ApiKey[]
+  usageRecords          UsageRecord[]
+  tags                  Tag[]
+  customFields          CustomFieldDefinition[]
+  notes                 Note[]
+
+  @@index([status])
+}
+
+/// White-label branding (logo, colors, sender identity)
+model FirmBranding {
+  id                  String   @id @default(cuid())
+  firmId              String   @unique
+  displayName         String?
+  logoFileId          String?
+  faviconFileId       String?
+  primaryColor        String?
+  secondaryColor      String?
+  accentColor         String?
+  emailSenderName     String?
+  emailSenderAddress  String?
+  emailReplyTo        String?
+  emailDomainVerified Boolean  @default(false)
+  emailDnsRecords     Json?
+  smsSenderId         String?
+  portalWelcomeText   String?
+  emailFooterHtml     String?
+  customCss           String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  firm    Firm        @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  logo    StoredFile? @relation("BrandingLogo", fields: [logoFileId], references: [id], onDelete: SetNull)
+  favicon StoredFile? @relation("BrandingFavicon", fields: [faviconFileId], references: [id], onDelete: SetNull)
+}
+
+/// Custom portal domains, e.g. portal.westgatetax.com
+model FirmDomain {
+  id                String    @id @default(cuid())
+  firmId            String
+  domain            String    @unique
+  isPrimary         Boolean   @default(false)
+  verificationToken String?
+  verifiedAt        DateTime?
+  sslStatus         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@index([firmId])
+}
+
+model FirmSettings {
+  id                         String         @id @default(cuid())
+  firmId                     String         @unique
+  teamCaseVisibility         CaseVisibility @default(ASSIGNED_ONLY)
+  requireStaffMfa            Boolean        @default(true)
+  clientOtpChannels          OtpChannel[]   @default([EMAIL, SMS])
+  staffSessionTtlMinutes     Int            @default(720)
+  clientSessionTtlMinutes    Int            @default(10080)
+  documentRetentionYears     Int            @default(7)
+  autoCreateNextYearCases    Boolean        @default(true)
+  nextYearCaseCreationMonth  Int?           @default(1)
+  currentTaxYear             Int?
+  allowClientBooking         Boolean        @default(true)
+  autoTriggerEsignOnApproval Boolean        @default(true)
+  autoAdvanceOnSignature     Boolean        @default(true)
+  invoiceNumberPrefix        String         @default("INV-")
+  caseNumberPrefix           String         @default("C-")
+  defaultInvoiceDueDays      Int            @default(14)
+  stuckCaseThresholdDays     Int            @default(7)
+  extra                      Json?
+  createdAt                  DateTime       @default(now())
+  updatedAt                  DateTime       @updatedAt
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+}
+
+/// Per-firm counters for human-readable numbers (case #, invoice #). Increment with UPDATE ... RETURNING.
+model FirmSequence {
+  firmId    String
+  key       String
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@id([firmId, key])
+}
+
+model FirmFeatureFlag {
+  id        String   @id @default(cuid())
+  firmId    String
+  key       String
+  enabled   Boolean  @default(false)
+  config    Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([firmId, key])
+}
+
+// =============================================================================
+// 2. IDENTITY, AUTH, RBAC
+// =============================================================================
+
+/// Global identity. One person can be staff in one firm and a client portal user elsewhere.
+model User {
+  id               String      @id @default(cuid())
+  email            String?     @unique // store lowercased
+  phone            String?     @unique // E.164
+  firstName        String?
+  lastName         String?
+  displayName      String?
+  avatarFileId     String?
+  passwordHash     String? // null for passwordless clients
+  emailVerifiedAt  DateTime?
+  phoneVerifiedAt  DateTime?
+  mfaEnabled       Boolean     @default(false)
+  status           UserStatus  @default(ACTIVE)
+  accountRole      AccountRole
+  locale           String?
+  timezone         String?
+  lastLoginAt      DateTime?
+  failedLoginCount Int         @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  deletedAt        DateTime?
+
+  avatar StoredFile? @relation("UserAvatar", fields: [avatarFileId], references: [id], onDelete: SetNull)
+
+  memberships          FirmMember[]
+  clientAccess         ClientAccess[]
+  personProfiles       ClientPerson[]
+  sessions             Session[]
+  otpChallenges        OtpChallenge[]
+  mfaFactors           MfaFactor[]
+  recoveryCodes        MfaRecoveryCode[]
+  verificationTokens   VerificationToken[]
+  invitationsSent      Invitation[]             @relation("InvitedBy")
+  onboardingLinksMade  OnboardingLink[]         @relation("OnboardingCreatedBy")
+  firmsOnboarded       Firm[]                   @relation("FirmOnboardedBy")
+  uploadedFiles        StoredFile[]             @relation("FileUploadedBy")
+  documentVersions     DocumentVersion[]
+  docRequestsCreated   DocumentRequest[]        @relation("DocRequestCreatedBy")
+  docRequestsReviewed  DocumentRequest[]        @relation("DocRequestReviewedBy")
+  draftsUploaded       ReturnDraft[]            @relation("DraftUploadedBy")
+  draftsDecided        ReturnDraft[]            @relation("DraftDecidedBy")
+  draftComments        DraftComment[]
+  summariesVerified    ReturnSummary[]
+  signatureReqsSent    SignatureRequest[]       @relation("SignatureSentBy")
+  signerRecords        SignatureSigner[]
+  invoicesCreated      Invoice[]                @relation("InvoiceCreatedBy")
+  paymentsMade         Payment[]                @relation("PaymentPaidBy")
+  tasksCreated         Task[]                   @relation("TaskCreatedBy")
+  tasksCompleted       Task[]                   @relation("TaskCompletedBy")
+  taskComments         TaskComment[]
+  messages             Message[]
+  messageReceipts      MessageReceipt[]
+  appointmentsBooked   Appointment[]            @relation("AppointmentBookedBy")
+  appointmentAttendees AppointmentAttendee[]
+  notifications        Notification[]
+  notificationPrefs    NotificationPreference[]
+  stageChanges         CaseStageHistory[]
+  assignmentsMade      CaseAssignment[]         @relation("AssignmentMadeBy")
+  callLogs             CallLog[]
+  auditLogs            AuditLog[]
+  importJobs           ImportJob[]
+  notes                Note[]
+  apiKeysCreated       ApiKey[]
+
+  @@index([status])
+  @@index([accountRole])
+}
+
+/// Staff/admin membership in a firm. Admin vs Team is expressed via roles (a person can hold both).
+model FirmMember {
+  id              String       @id @default(cuid())
+  firmId          String
+  userId          String
+  staffType       StaffType    @default(PREPARER)
+  title           String?
+  status          MemberStatus @default(INVITED)
+  isOwner         Boolean      @default(false)
+  maxActiveCases  Int? // capacity for workload view
+  color           String? // calendar color
+  ptin            String? // preparer tax ID number
+  efin            String? // LATER: per-preparer EFIN if needed
+  hourlyRateCents Int? // LATER: time tracking
+  joinedAt        DateTime?
+  deactivatedAt   DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  roles                  FirmMemberRole[]
+  casesAsPreparer        Case[]                  @relation("CasePreparer")
+  casesAsReviewer        Case[]                  @relation("CaseReviewer")
+  caseAssignments        CaseAssignment[]        @relation("AssignmentMember")
+  caseCollaborations     CaseCollaborator[]
+  tasksAssigned          Task[]                  @relation("TaskAssignee")
+  appointmentsHosted     Appointment[]           @relation("AppointmentHost")
+  availabilityRules      AvailabilityRule[]
+  availabilityExceptions AvailabilityException[]
+  calendarConnections    CalendarConnection[]
+  callsEscalated         CallLog[]               @relation("CallEscalatedTo")
+  signerRecords          SignatureSigner[]       @relation("SignerMember")
+
+  @@unique([firmId, userId])
+  @@index([firmId, status])
+  @@index([userId])
+}
+
+/// Firm-scoped role. System roles: "admin", "team". Custom roles possible later.
+model Role {
+  id          String   @id @default(cuid())
+  firmId      String
+  key         String // "admin", "team", "reviewer", ...
+  name        String
+  description String?
+  isSystem    Boolean  @default(false)
+  permissions String[] // e.g. ["case.read.all","case.reassign","billing.manage"]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  firm    Firm             @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  members FirmMemberRole[]
+
+  @@unique([firmId, key])
+}
+
+model FirmMemberRole {
+  memberId    String
+  roleId      String
+  grantedAt   DateTime @default(now())
+  grantedById String?
+
+  member FirmMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  role   Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([memberId, roleId])
+  @@index([roleId])
+}
+
+model Session {
+  id            String    @id @default(cuid())
+  userId        String
+  firmId        String? // active firm context
+  tokenHash     String    @unique
+  ipAddress     String?
+  userAgent     String?
+  deviceLabel   String?
+  mfaVerifiedAt DateTime?
+  lastSeenAt    DateTime  @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firm Firm? @relation(fields: [firmId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Passwordless login + MFA + signature OTPs (FR-1, FR-2)
+model OtpChallenge {
+  id          String     @id @default(cuid())
+  userId      String?
+  firmId      String?
+  destination String // email or E.164 phone
+  channel     OtpChannel
+  purpose     OtpPurpose
+  codeHash    String
+  attempts    Int        @default(0)
+  maxAttempts Int        @default(5)
+  ipAddress   String?
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime   @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([destination, purpose, createdAt])
+  @@index([expiresAt])
+}
+
+model MfaFactor {
+  id              String    @id @default(cuid())
+  userId          String
+  type            MfaType
+  label           String?
+  secretEncrypted String? // TOTP secret
+  phone           String? // SMS factor
+  credentialId    String?   @unique // WebAuthn (LATER)
+  publicKey       String? // WebAuthn (LATER)
+  isPrimary       Boolean   @default(false)
+  verifiedAt      DateTime?
+  lastUsedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model MfaRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  id         String                @id @default(cuid())
+  userId     String
+  type       VerificationTokenType
+  tokenHash  String                @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime              @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+}
+
+/// Team member invitations (unlimited seats)
+model Invitation {
+  id          String           @id @default(cuid())
+  firmId      String
+  email       String
+  firstName   String?
+  lastName    String?
+  staffType   StaffType        @default(PREPARER)
+  roleKeys    String[]
+  tokenHash   String           @unique
+  status      InvitationStatus @default(PENDING)
+  invitedById String?
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime         @default(now())
+
+  firm      Firm  @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  invitedBy User? @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  @@index([firmId, status])
+  @@index([email])
+}
+
+/// Branded onboarding link (new) / verified portal link (returning)
+model OnboardingLink {
+  id          String             @id @default(cuid())
+  firmId      String
+  clientId    String
+  type        OnboardingLinkType @default(NEW_CLIENT)
+  tokenHash   String             @unique
+  sentTo      String?
+  sentVia     OtpChannel?
+  createdById String?
+  expiresAt   DateTime
+  openedAt    DateTime?
+  completedAt DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime           @default(now())
+
+  firm      Firm   @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  client    Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy User?  @relation("OnboardingCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([clientId])
+}
+
+// =============================================================================
+// 3. CLIENTS (taxpayer entities)
+// =============================================================================
+
+/// A taxpayer entity (individual/household or business). Owns many Cases across years.
+model Client {
+  id                  String              @id @default(cuid())
+  firmId              String
+  clientNumber        String?
+  type                ClientType          @default(INDIVIDUAL)
+  status              ClientStatus        @default(ONBOARDING)
+  displayName         String
+  legalName           String?
+  email               String?
+  phone               String?
+  preferredChannel    OtpChannel?
+  preferredLanguage   String?             @default("en")
+  // individual
+  defaultFilingStatus FilingStatus?
+  // business
+  entityType          BusinessEntityType?
+  einEncrypted        String?
+  einLast4            String?
+  stateOfFormation    String?
+  fiscalYearEndMonth  Int?
+  businessStartDate   DateTime?
+  naicsCode           String?
+  // ownership
+  primaryMemberId     String? // default preparer for new cases (scalar to avoid cycle)
+  source              String? // referral, web, import
+  referredBy          String?
+  importJobId         String?
+  onboardedAt         DateTime?
+  metadata            Json?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  deletedAt           DateTime?
+
+  firm      Firm       @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  importJob ImportJob? @relation(fields: [importJobId], references: [id], onDelete: SetNull)
+
+  access          ClientAccess[]
+  persons         ClientPerson[]
+  addresses       Address[]
+  cases           Case[]
+  onboardingLinks OnboardingLink[]
+  documents       Document[]
+  invoices        Invoice[]
+  messageThreads  MessageThread[]
+  appointments    Appointment[]
+  callLogs        CallLog[]
+  tags            ClientTag[]
+  relationsFrom   ClientRelationship[] @relation("RelFrom")
+  relationsTo     ClientRelationship[] @relation("RelTo")
+
+  @@unique([firmId, clientNumber])
+  @@index([firmId, status])
+  @@index([firmId, displayName])
+  @@index([firmId, email])
+  @@index([firmId, deletedAt])
+}
+
+/// Portal login -> client entity access. One portal user can access many entities (household + businesses).
+model ClientAccess {
+  id          String            @id @default(cuid())
+  clientId    String
+  userId      String
+  accessLevel ClientAccessLevel @default(FULL)
+  isPrimary   Boolean           @default(false)
+  invitedAt   DateTime?
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, userId])
+  @@index([userId])
+}
+
+/// People attached to a client: taxpayer, spouse (joint signing), dependents, business officers.
+model ClientPerson {
+  id           String           @id @default(cuid())
+  clientId     String
+  userId       String? // linked portal login (e.g., spouse signs separately)
+  role         ClientPersonRole
+  firstName    String
+  middleName   String?
+  lastName     String
+  suffix       String?
+  email        String?
+  phone        String?
+  dateOfBirth  DateTime?        @db.Date
+  ssnEncrypted String?
+  ssnLast4     String?
+  occupation   String?
+  relationship String? // for dependents: son, daughter...
+  ownershipPct Decimal?         @db.Decimal(5, 2) // for partners/officers
+  isSigner     Boolean          @default(false)
+  dateOfDeath  DateTime?        @db.Date
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  deletedAt    DateTime?
+
+  client  Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user    User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  signers SignatureSigner[]
+
+  @@index([clientId, role])
+}
+
+model Address {
+  id         String      @id @default(cuid())
+  clientId   String
+  type       AddressType @default(HOME)
+  line1      String
+  line2      String?
+  city       String
+  state      String?
+  postalCode String?
+  country    String      @default("US")
+  isPrimary  Boolean     @default(false)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+}
+
+/// LATER: link related entities (owner -> business, household members)
+model ClientRelationship {
+  id           String   @id @default(cuid())
+  fromClientId String
+  toClientId   String
+  type         String // "owner_of", "spouse_of", "related"
+  note         String?
+  createdAt    DateTime @default(now())
+
+  from Client @relation("RelFrom", fields: [fromClientId], references: [id], onDelete: Cascade)
+  to   Client @relation("RelTo", fields: [toClientId], references: [id], onDelete: Cascade)
+
+  @@unique([fromClientId, toClientId, type])
+}
+
+// =============================================================================
+// 4. PIPELINE & AUTOMATION
+// =============================================================================
+
+model Pipeline {
+  id          String   @id @default(cuid())
+  firmId      String
+  name        String
+  description String?
+  isDefault   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  firm            Firm             @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  stages          PipelineStage[]
+  cases           Case[]
+  engagementTypes EngagementType[]
+  automationRules AutomationRule[]
+
+  @@index([firmId])
+}
+
+model PipelineStage {
+  id              String        @id @default(cuid())
+  pipelineId      String
+  key             String // stable machine key
+  name            String // firm-customizable label
+  category        StageCategory // semantic meaning for automations/reports
+  position        Int
+  color           String?
+  slaDays         Int? // overdue/stuck threshold
+  isClientVisible Boolean       @default(true)
+  clientLabel     String? // label shown in client portal
+  isTerminal      Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  pipeline          Pipeline           @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  cases             Case[]
+  historyFrom       CaseStageHistory[] @relation("StageFrom")
+  historyTo         CaseStageHistory[] @relation("StageTo")
+  tasks             Task[]
+  taskTemplateItems TaskTemplateItem[]
+  automationRules   AutomationRule[]
+
+  @@unique([pipelineId, key])
+  @@index([pipelineId, position])
+}
+
+/// Stage automations: e.g. ALL_SIGNATURES_COMPLETED -> advance to Filing (FR-7, FR-21)
+model AutomationRule {
+  id         String            @id @default(cuid())
+  firmId     String
+  pipelineId String?
+  stageId    String?
+  name       String
+  trigger    AutomationTrigger
+  conditions Json? // e.g. {"returnType":["FORM_1040"]}
+  actions    Json // [{type:"ADVANCE_STAGE",toStageKey:"filing"},{type:"CREATE_TASKS",templateId:"..."}]
+  isActive   Boolean           @default(true)
+  position   Int               @default(0)
+  cronExpr   String? // for SCHEDULED trigger
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  firm     Firm            @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  pipeline Pipeline?       @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  stage    PipelineStage?  @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  runs     AutomationRun[]
+
+  @@index([firmId, trigger, isActive])
+}
+
+model AutomationRun {
+  id          String    @id @default(cuid())
+  ruleId      String
+  caseId      String?
+  status      JobStatus @default(QUEUED)
+  input       Json?
+  output      Json?
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  rule AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  case Case?          @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  @@index([ruleId, createdAt])
+  @@index([caseId])
+}
+
+/// Service/engagement type: bundles default pipeline + task template + doc checklist + pricing.
+model EngagementType {
+  id                   String      @id @default(cuid())
+  firmId               String
+  name                 String // "Individual 1040", "S-Corp 1120S"
+  returnType           ReturnType?
+  pipelineId           String?
+  taskTemplateId       String?
+  docRequestTemplateId String?
+  defaultServiceItemId String?
+  isActive             Boolean     @default(true)
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  firm               Firm                     @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  pipeline           Pipeline?                @relation(fields: [pipelineId], references: [id], onDelete: SetNull)
+  taskTemplate       TaskTemplate?            @relation(fields: [taskTemplateId], references: [id], onDelete: SetNull)
+  docRequestTemplate DocumentRequestTemplate? @relation(fields: [docRequestTemplateId], references: [id], onDelete: SetNull)
+  defaultServiceItem ServiceItem?             @relation(fields: [defaultServiceItemId], references: [id], onDelete: SetNull)
+  cases              Case[]
+
+  @@unique([firmId, name])
+}
+
+// =============================================================================
+// 5. CASE (central container: client + tax year + return type)
+// =============================================================================
+
+model Case {
+  id               String        @id @default(cuid())
+  firmId           String
+  clientId         String
+  caseNumber       String // e.g. "C-000123" from FirmSequence
+  title            String? // "John Smith - 2026 Tax Return"
+  taxYear          Int
+  returnType       ReturnType    @default(FORM_1040)
+  engagementTypeId String?
+  filingStatus     FilingStatus?
+  pipelineId       String
+  currentStageId   String
+  stageEnteredAt   DateTime      @default(now())
+  status           CaseStatus    @default(OPEN)
+  priority         CasePriority  @default(NORMAL)
+  preparerId       String? // current owner pointer (FR-8)
+  reviewerId       String?
+  dueDate          DateTime? // statutory or internal due date
+  internalDueDate  DateTime?
+  extensionFiled   Boolean       @default(false)
+  extendedDueDate  DateTime?
+  previousCaseId   String? // prior-year link for multi-year history
+  finalizedAt      DateTime?
+  finalizedById    String?
+  filedAt          DateTime?
+  archivedAt       DateTime?
+  onHoldReason     String?
+  // denormalized counters for fast dashboards (maintain in app/trigger)
+  missingDocsCount Int           @default(0)
+  pendingSigCount  Int           @default(0)
+  balanceDueCents  Int           @default(0)
+  openTaskCount    Int           @default(0)
+  lastActivityAt   DateTime?
+  metadata         Json?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  deletedAt        DateTime?
+
+  firm           Firm            @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  client         Client          @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  engagementType EngagementType? @relation(fields: [engagementTypeId], references: [id], onDelete: SetNull)
+  pipeline       Pipeline        @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
+  currentStage   PipelineStage   @relation(fields: [currentStageId], references: [id], onDelete: Restrict)
+  preparer       FirmMember?     @relation("CasePreparer", fields: [preparerId], references: [id], onDelete: SetNull)
+  reviewer       FirmMember?     @relation("CaseReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  previousCase   Case?           @relation("CaseYearChain", fields: [previousCaseId], references: [id], onDelete: SetNull)
+  nextCases      Case[]          @relation("CaseYearChain")
+
+  assignments       CaseAssignment[]
+  collaborators     CaseCollaborator[]
+  stageHistory      CaseStageHistory[]
+  documentRequests  DocumentRequest[]
+  documents         Document[]
+  returnDrafts      ReturnDraft[]
+  returnSummaries   ReturnSummary[]
+  eFilings          EFiling[]
+  signatureRequests SignatureRequest[]
+  invoices          Invoice[]
+  tasks             Task[]
+  messageThreads    MessageThread[]
+  appointments      Appointment[]
+  callLogs          CallLog[]
+  reminders         Reminder[]
+  automationRuns    AutomationRun[]
+  auditLogs         AuditLog[]
+  tags              CaseTag[]
+
+  @@unique([firmId, caseNumber])
+  @@unique([clientId, taxYear, returnType])
+  @@index([firmId, status, currentStageId])
+  @@index([firmId, preparerId, status])
+  @@index([firmId, taxYear])
+  @@index([firmId, dueDate])
+  @@index([firmId, stageEnteredAt])
+  @@index([clientId])
+}
+
+/// Full assignment history. Reassignment closes one row and opens another (FR-8).
+model CaseAssignment {
+  id           String         @id @default(cuid())
+  caseId       String
+  memberId     String
+  role         AssignmentRole @default(PREPARER)
+  assignedById String?
+  reason       String?
+  startedAt    DateTime       @default(now())
+  endedAt      DateTime?
+
+  case       Case       @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  member     FirmMember @relation("AssignmentMember", fields: [memberId], references: [id], onDelete: Restrict)
+  assignedBy User?      @relation("AssignmentMadeBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@index([caseId, startedAt])
+  @@index([memberId, endedAt])
+}
+
+/// Shared visibility beyond the assigned preparer (FR-3 "shared visibility settings")
+model CaseCollaborator {
+  caseId   String
+  memberId String
+  canEdit  Boolean  @default(true)
+  addedAt  DateTime @default(now())
+
+  case   Case       @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  member FirmMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@id([caseId, memberId])
+  @@index([memberId])
+}
+
+model CaseStageHistory {
+  id               String    @id @default(cuid())
+  caseId           String
+  fromStageId      String?
+  toStageId        String
+  changedById      String?
+  actorType        ActorType @default(USER)
+  automationRuleId String?
+  reason           String?
+  durationSec      Int? // time spent in fromStage
+  createdAt        DateTime  @default(now())
+
+  case      Case           @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  fromStage PipelineStage? @relation("StageFrom", fields: [fromStageId], references: [id], onDelete: SetNull)
+  toStage   PipelineStage  @relation("StageTo", fields: [toStageId], references: [id], onDelete: Restrict)
+  changedBy User?          @relation(fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([caseId, createdAt])
+  @@index([toStageId, createdAt])
+}
+
+// =============================================================================
+// 6. FILES & DOCUMENTS
+// =============================================================================
+
+/// Physical object in blob storage. Reused by documents, attachments, branding, recordings, reports.
+model StoredFile {
+  id              String          @id @default(cuid())
+  firmId          String? // null = platform-level asset (e.g. Platform Owner's own avatar)
+  provider        StorageProvider @default(S3)
+  bucket          String
+  key             String          @unique
+  originalName    String
+  mimeType        String
+  sizeBytes       BigInt
+  checksumSha256  String?
+  kmsKeyId        String? // encryption at rest (FR-12)
+  virusScanStatus VirusScanStatus @default(PENDING)
+  virusScannedAt  DateTime?
+  pageCount       Int?
+  uploadedById    String?
+  uploadIp        String?
+  createdAt       DateTime        @default(now())
+  deletedAt       DateTime?
+
+  firm       Firm? @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  uploadedBy User? @relation("FileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  brandingLogos      FirmBranding[]      @relation("BrandingLogo")
+  brandingFavicons   FirmBranding[]      @relation("BrandingFavicon")
+  userAvatars        User[]              @relation("UserAvatar")
+  documentVersions   DocumentVersion[]
+  messageAttachments MessageAttachment[]
+  signatureTemplates SignatureTemplate[]
+  sigCertificates    SignatureRequest[]  @relation("SignatureCertificate")
+  callRecordings     CallLog[]           @relation("CallRecording")
+  reportRuns         ReportRun[]
+  importJobs         ImportJob[]
+  invoicePdfs        Invoice[]           @relation("InvoicePdf")
+
+  @@index([firmId, createdAt])
+}
+
+model DocumentCategory {
+  id        String   @id @default(cuid())
+  firmId    String
+  parentId  String?
+  key       String
+  name      String // "Income", "Deductions", "Identity", "Prior Returns"
+  position  Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  firm          Firm                          @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  parent        DocumentCategory?             @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children      DocumentCategory[]            @relation("CategoryTree")
+  requests      DocumentRequest[]
+  documents     Document[]
+  templateItems DocumentRequestTemplateItem[]
+
+  @@unique([firmId, key])
+}
+
+/// Checklist line item: "W-2 - Employer" requested from the client (FR-9, FR-10)
+model DocumentRequest {
+  id               String                @id @default(cuid())
+  firmId           String
+  caseId           String
+  categoryId       String?
+  templateItemId   String?
+  title            String
+  description      String?
+  status           DocumentRequestStatus @default(MISSING)
+  isRequired       Boolean               @default(true)
+  isClientVisible  Boolean               @default(true)
+  dueDate          DateTime?
+  position         Int                   @default(0)
+  createdById      String?
+  reviewedById     String?
+  receivedAt       DateTime?
+  rejectedReason   String?
+  waivedReason     String?
+  remindersEnabled Boolean               @default(true)
+  reminderCount    Int                   @default(0)
+  lastRemindedAt   DateTime?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  deletedAt        DateTime?
+
+  firm         Firm                         @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  case         Case                         @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  category     DocumentCategory?            @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  templateItem DocumentRequestTemplateItem? @relation(fields: [templateItemId], references: [id], onDelete: SetNull)
+  createdBy    User?                        @relation("DocRequestCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  reviewedBy   User?                        @relation("DocRequestReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  documents    Document[]
+  reminders    Reminder[]
+
+  @@index([caseId, status])
+  @@index([firmId, status, dueDate])
+}
+
+/// Logical document; bytes live in DocumentVersion -> StoredFile (FR-11 version history)
+model Document {
+  id               String             @id @default(cuid())
+  firmId           String
+  caseId           String?
+  clientId         String // enables cross-year client document history
+  requestId        String?
+  categoryId       String?
+  kind             DocumentKind       @default(CLIENT_SOURCE)
+  visibility       DocumentVisibility @default(CLIENT_VISIBLE)
+  title            String
+  description      String?
+  clientNote       String? // note the client added on upload
+  taxYear          Int?
+  currentVersionId String?            @unique
+  versionCount     Int                @default(0)
+  isFinal          Boolean            @default(false)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  deletedAt        DateTime?
+
+  firm           Firm              @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  case           Case?             @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  client         Client            @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  request        DocumentRequest?  @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  category       DocumentCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  currentVersion DocumentVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  versions       DocumentVersion[] @relation("DocumentVersions")
+
+  returnDrafts       ReturnDraft[]
+  returnSummaries    ReturnSummary[]
+  extractionJobs     ExtractionJob[]
+  sigSourceFor       SignatureRequest[]  @relation("SignatureSourceDoc")
+  sigSignedFor       SignatureRequest[]  @relation("SignatureSignedDoc")
+  messageAttachments MessageAttachment[]
+
+  @@index([caseId, kind])
+  @@index([clientId, taxYear])
+  @@index([requestId])
+  @@index([firmId, createdAt])
+}
+
+model DocumentVersion {
+  id             String        @id @default(cuid())
+  documentId     String
+  versionNumber  Int
+  fileId         String
+  uploadedById   String?
+  uploadedVia    UploadChannel @default(PORTAL)
+  note           String?
+  replacedReason String?
+  createdAt      DateTime      @default(now())
+
+  document   Document   @relation("DocumentVersions", fields: [documentId], references: [id], onDelete: Cascade)
+  currentOf  Document?  @relation("CurrentVersion")
+  file       StoredFile @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  uploadedBy User?      @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@unique([documentId, versionNumber])
+  @@index([fileId])
+}
+
+/// Reusable document checklists (FR-30)
+model DocumentRequestTemplate {
+  id          String      @id @default(cuid())
+  firmId      String
+  name        String
+  description String?
+  returnType  ReturnType?
+  clientType  ClientType?
+  isActive    Boolean     @default(true)
+  createdById String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  firm            Firm                          @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  items           DocumentRequestTemplateItem[]
+  engagementTypes EngagementType[]
+
+  @@unique([firmId, name])
+}
+
+model DocumentRequestTemplateItem {
+  id            String   @id @default(cuid())
+  templateId    String
+  categoryId    String?
+  title         String
+  description   String?
+  isRequired    Boolean  @default(true)
+  dueOffsetDays Int? // relative to case creation
+  position      Int      @default(0)
+  conditions    Json? // LATER: include only if e.g. filingStatus = MFJ
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  template DocumentRequestTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  category DocumentCategory?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  requests DocumentRequest[]
+
+  @@index([templateId, position])
+}
+
+// =============================================================================
+// 7. DRAFT REVIEW, RETURN FIGURES, FINAL FILING
+// =============================================================================
+
+/// Draft return shared with client for review/approval (FR-16..18)
+model ReturnDraft {
+  id             String      @id @default(cuid())
+  firmId         String
+  caseId         String
+  documentId     String
+  versionNumber  Int
+  status         DraftStatus @default(UPLOADED)
+  summaryText    String? // preparer's cover note
+  uploadedById   String?
+  sentToClientAt DateTime?
+  clientViewedAt DateTime?
+  decidedById    String?
+  decidedAt      DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  firm       Firm     @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  case       Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  uploadedBy User?    @relation("DraftUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  decidedBy  User?    @relation("DraftDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  comments          DraftComment[]
+  summaries         ReturnSummary[]
+  signatureRequests SignatureRequest[]
+
+  @@unique([caseId, versionNumber])
+  @@index([firmId, status])
+}
+
+model DraftComment {
+  id           String             @id @default(cuid())
+  draftId      String
+  authorId     String?
+  authorType   MessageAuthorType  @default(CLIENT)
+  action       DraftCommentAction @default(COMMENT)
+  body         String?
+  pageNumber   Int?
+  anchor       Json? // LATER: highlight coordinates
+  resolvedAt   DateTime?
+  resolvedById String?
+  createdAt    DateTime           @default(now())
+
+  draft  ReturnDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  author User?       @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([draftId, createdAt])
+}
+
+/// Key figures (draft preview or final extraction: AGI, CTC, EIC, QBI) (FR-32)
+model ReturnSummary {
+  id                 String            @id @default(cuid())
+  firmId             String
+  caseId             String
+  draftId            String?
+  documentId         String?
+  type               ReturnSummaryType
+  filingStatus       FilingStatus?
+  totalIncome        Decimal?          @db.Decimal(14, 2)
+  agi                Decimal?          @db.Decimal(14, 2)
+  taxableIncome      Decimal?          @db.Decimal(14, 2)
+  standardDeduction  Decimal?          @db.Decimal(14, 2)
+  itemizedDeductions Decimal?          @db.Decimal(14, 2)
+  qbiDeduction       Decimal?          @db.Decimal(14, 2)
+  totalTax           Decimal?          @db.Decimal(14, 2)
+  childTaxCredit     Decimal?          @db.Decimal(14, 2)
+  additionalCtc      Decimal?          @db.Decimal(14, 2)
+  earnedIncomeCredit Decimal?          @db.Decimal(14, 2)
+  totalPayments      Decimal?          @db.Decimal(14, 2)
+  federalRefund      Decimal?          @db.Decimal(14, 2)
+  federalBalanceDue  Decimal?          @db.Decimal(14, 2)
+  stateRefund        Decimal?          @db.Decimal(14, 2)
+  stateBalanceDue    Decimal?          @db.Decimal(14, 2)
+  extraFigures       Json? // any additional line items
+  extractionMethod   ExtractionMethod  @default(MANUAL)
+  confidence         Decimal?          @db.Decimal(5, 4)
+  verifiedById       String?
+  verifiedAt         DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  firm       Firm         @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  case       Case         @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  draft      ReturnDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  document   Document?    @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  verifiedBy User?        @relation(fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@index([caseId, type])
+  @@index([firmId, type])
+}
+
+/// OCR / parsing job over a document
+model ExtractionJob {
+  id          String           @id @default(cuid())
+  firmId      String
+  documentId  String
+  method      ExtractionMethod @default(OCR)
+  provider    String?
+  status      JobStatus        @default(QUEUED)
+  result      Json?
+  error       String?
+  attempts    Int              @default(0)
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime         @default(now())
+
+  firm     Firm     @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([status, createdAt])
+}
+
+/// LATER: e-file transmission tracking per jurisdiction (federal + each state)
+model EFiling {
+  id             String      @id @default(cuid())
+  firmId         String
+  caseId         String
+  jurisdiction   String // "FED", "CA", "NY"
+  formType       String?
+  status         EFileStatus @default(NOT_STARTED)
+  submissionId   String?
+  transmittedAt  DateTime?
+  acknowledgedAt DateTime?
+  rejectionCodes String[]
+  rejectionNotes String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@unique([caseId, jurisdiction])
+  @@index([firmId, status])
+}
+
+// =============================================================================
+// 8. E-SIGNATURE (FR-19..21)
+// =============================================================================
+
+model SignatureTemplate {
+  id             String           @id @default(cuid())
+  firmId         String
+  name           String
+  kind           SignatureDocKind
+  fileId         String?
+  bodyHtml       String? // for engagement letters rendered from HTML
+  fieldMap       Json? // signature/date/initial field coordinates
+  requiresSpouse Boolean          @default(false)
+  isActive       Boolean          @default(true)
+  version        Int              @default(1)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  firm     Firm               @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  file     StoredFile?        @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  requests SignatureRequest[]
+
+  @@index([firmId, kind])
+}
+
+model SignatureRequest {
+  id                   String                 @id @default(cuid())
+  firmId               String
+  caseId               String
+  templateId           String?
+  draftId              String?
+  kind                 SignatureDocKind
+  title                String
+  status               SignatureRequestStatus @default(DRAFT)
+  sessionType          SignatureSessionType   @default(SINGLE)
+  signingOrderEnforced Boolean                @default(false)
+  sourceDocumentId     String?
+  signedDocumentId     String?
+  certificateFileId    String? // certificate of completion
+  provider             String? // "native", "docusign", "dropbox_sign"
+  providerEnvelopeId   String?                @unique
+  sentById             String?
+  sentAt               DateTime?
+  expiresAt            DateTime?
+  completedAt          DateTime?
+  voidedAt             DateTime?
+  voidReason           String?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  firm           Firm               @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  case           Case               @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  template       SignatureTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  draft          ReturnDraft?       @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  sourceDocument Document?          @relation("SignatureSourceDoc", fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  signedDocument Document?          @relation("SignatureSignedDoc", fields: [signedDocumentId], references: [id], onDelete: SetNull)
+  certificate    StoredFile?        @relation("SignatureCertificate", fields: [certificateFileId], references: [id], onDelete: SetNull)
+  sentBy         User?              @relation("SignatureSentBy", fields: [sentById], references: [id], onDelete: SetNull)
+  signers        SignatureSigner[]
+  events         SignatureEvent[]
+  reminders      Reminder[]
+
+  @@index([caseId, status])
+  @@index([firmId, status])
+}
+
+model SignatureSigner {
+  id                String              @id @default(cuid())
+  requestId         String
+  userId            String?
+  personId          String? // ClientPerson (taxpayer/spouse)
+  memberId          String? // preparer countersign (8879 ERO)
+  role              SignerRole          @default(TAXPAYER)
+  name              String
+  email             String?
+  phone             String?
+  signingOrder      Int                 @default(1)
+  status            SignerStatus        @default(PENDING)
+  authMethod        SignatureAuthMethod @default(PORTAL_SESSION)
+  accessTokenHash   String?             @unique
+  signatureImageKey String? // storage key of drawn/typed signature
+  typedName         String?
+  consentAcceptedAt DateTime? // ESIGN consent
+  viewedAt          DateTime?
+  signedAt          DateTime?
+  declinedAt        DateTime?
+  declineReason     String?
+  ipAddress         String?
+  userAgent         String?
+  geoLocation       String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  request SignatureRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  user    User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  person  ClientPerson?    @relation(fields: [personId], references: [id], onDelete: SetNull)
+  member  FirmMember?      @relation("SignerMember", fields: [memberId], references: [id], onDelete: SetNull)
+  events  SignatureEvent[]
+
+  @@index([requestId, signingOrder])
+  @@index([userId])
+}
+
+/// Immutable e-sign audit trail (IP, timestamp, signer identity) (FR-20)
+model SignatureEvent {
+  id        String             @id @default(cuid())
+  requestId String
+  signerId  String?
+  type      SignatureEventType
+  ipAddress String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime           @default(now())
+
+  request SignatureRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  signer  SignatureSigner? @relation(fields: [signerId], references: [id], onDelete: SetNull)
+
+  @@index([requestId, createdAt])
+}
+
+// =============================================================================
+// 9. PAYMENTS (Stripe Connect) (FR-22..25)
+// =============================================================================
+
+model StripeAccount {
+  id                      String            @id @default(cuid())
+  firmId                  String            @unique
+  stripeAccountId         String            @unique // acct_...
+  type                    StripeAccountType @default(STANDARD)
+  chargesEnabled          Boolean           @default(false)
+  payoutsEnabled          Boolean           @default(false)
+  detailsSubmitted        Boolean           @default(false)
+  country                 String?
+  defaultCurrency         String?
+  applicationFeeBps       Int? // platform take-rate in basis points (optional model)
+  applicationFeeFlatCents Int?
+  connectedAt             DateTime?
+  disconnectedAt          DateTime?
+  requirements            Json?
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+}
+
+/// Price catalog (LATER: used by engagement types and invoice lines)
+model ServiceItem {
+  id             String   @id @default(cuid())
+  firmId         String
+  name           String
+  description    String?
+  unitPriceCents Int
+  taxable        Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  firm            Firm              @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  lineItems       InvoiceLineItem[]
+  engagementTypes EngagementType[]
+
+  @@unique([firmId, name])
+}
+
+model Invoice {
+  id                      String        @id @default(cuid())
+  firmId                  String
+  caseId                  String?
+  clientId                String
+  number                  String
+  status                  InvoiceStatus @default(DRAFT)
+  currency                String        @default("usd")
+  subtotalCents           Int           @default(0)
+  discountCents           Int           @default(0)
+  taxCents                Int           @default(0)
+  totalCents              Int           @default(0)
+  amountPaidCents         Int           @default(0)
+  amountRefundedCents     Int           @default(0)
+  amountDueCents          Int           @default(0)
+  memo                    String?
+  issuedAt                DateTime?
+  dueDate                 DateTime?
+  paidAt                  DateTime?
+  voidedAt                DateTime?
+  stripeInvoiceId         String?       @unique
+  stripeCheckoutSessionId String?       @unique
+  hostedPaymentUrl        String?
+  pdfFileId               String?
+  autoRemind              Boolean       @default(true)
+  reminderCount           Int           @default(0)
+  lastRemindedAt          DateTime?
+  createdById             String?
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+  deletedAt               DateTime?
+
+  firm      Firm              @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  case      Case?             @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  client    Client            @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  pdf       StoredFile?       @relation("InvoicePdf", fields: [pdfFileId], references: [id], onDelete: SetNull)
+  createdBy User?             @relation("InvoiceCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  lineItems InvoiceLineItem[]
+  payments  Payment[]
+  reminders Reminder[]
+
+  @@unique([firmId, number])
+  @@index([firmId, status, dueDate])
+  @@index([caseId])
+  @@index([clientId])
+}
+
+model InvoiceLineItem {
+  id             String  @id @default(cuid())
+  invoiceId      String
+  serviceItemId  String?
+  description    String
+  quantity       Decimal @default(1) @db.Decimal(10, 2)
+  unitPriceCents Int
+  amountCents    Int
+  taxable        Boolean @default(false)
+  position       Int     @default(0)
+
+  invoice     Invoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  serviceItem ServiceItem? @relation(fields: [serviceItemId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId])
+}
+
+model Payment {
+  id                    String            @id @default(cuid())
+  firmId                String
+  invoiceId             String
+  paidById              String?
+  amountCents           Int
+  currency              String            @default("usd")
+  applicationFeeCents   Int?
+  stripeFeeCents        Int?
+  netCents              Int?
+  method                PaymentMethodType @default(CARD)
+  status                PaymentStatus     @default(PENDING)
+  stripePaymentIntentId String?           @unique
+  stripeChargeId        String?           @unique
+  cardBrand             String?
+  cardLast4             String?
+  receiptUrl            String?
+  failureCode           String?
+  failureMessage        String?
+  paidAt                DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  firm    Firm     @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  invoice Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  paidBy  User?    @relation("PaymentPaidBy", fields: [paidById], references: [id], onDelete: SetNull)
+  refunds Refund[]
+
+  @@index([firmId, status, createdAt])
+  @@index([invoiceId])
+}
+
+model Refund {
+  id             String        @id @default(cuid())
+  paymentId      String
+  amountCents    Int
+  reason         String?
+  status         PaymentStatus @default(PENDING)
+  stripeRefundId String?       @unique
+  createdById    String?
+  createdAt      DateTime      @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+}
+
+// =============================================================================
+// 10. TASKS
+// =============================================================================
+
+model Task {
+  id               String       @id @default(cuid())
+  firmId           String
+  caseId           String?
+  parentTaskId     String?
+  stageId          String? // task belongs to a pipeline stage
+  templateItemId   String?
+  callLogId        String? // Voice-AI follow-up
+  title            String
+  description      String?
+  status           TaskStatus   @default(TODO)
+  priority         TaskPriority @default(NORMAL)
+  source           TaskSource   @default(MANUAL)
+  assigneeId       String?
+  isClientTask     Boolean      @default(false) // shows in client "Needs your attention"
+  isBlocking       Boolean      @default(false) // must complete before stage exit
+  dueAt            DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  completedById    String?
+  createdById      String?
+  position         Int          @default(0)
+  estimatedMinutes Int? // LATER: capacity planning
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  deletedAt        DateTime?
+
+  firm         Firm              @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  case         Case?             @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  parent       Task?             @relation("Subtasks", fields: [parentTaskId], references: [id], onDelete: Cascade)
+  subtasks     Task[]            @relation("Subtasks")
+  stage        PipelineStage?    @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  templateItem TaskTemplateItem? @relation(fields: [templateItemId], references: [id], onDelete: SetNull)
+  callLog      CallLog?          @relation(fields: [callLogId], references: [id], onDelete: SetNull)
+  assignee     FirmMember?       @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  completedBy  User?             @relation("TaskCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  createdBy    User?             @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  comments     TaskComment[]
+  reminders    Reminder[]
+
+  @@index([firmId, assigneeId, status])
+  @@index([caseId, status])
+  @@index([firmId, dueAt])
+}
+
+model TaskComment {
+  id        String    @id @default(cuid())
+  taskId    String
+  authorId  String?
+  body      String
+  createdAt DateTime  @default(now())
+  editedAt  DateTime?
+
+  task   Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([taskId, createdAt])
+}
+
+model TaskTemplate {
+  id          String      @id @default(cuid())
+  firmId      String
+  name        String
+  description String?
+  returnType  ReturnType?
+  isActive    Boolean     @default(true)
+  createdById String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  firm            Firm               @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  items           TaskTemplateItem[]
+  engagementTypes EngagementType[]
+
+  @@unique([firmId, name])
+}
+
+model TaskTemplateItem {
+  id              String          @id @default(cuid())
+  templateId      String
+  stageId         String? // create when case enters this stage
+  title           String
+  description     String?
+  priority        TaskPriority    @default(NORMAL)
+  defaultAssignee AssignmentRole? // assign to case preparer/reviewer
+  dueOffsetDays   Int?
+  isClientTask    Boolean         @default(false)
+  isBlocking      Boolean         @default(false)
+  position        Int             @default(0)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  template TaskTemplate   @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  stage    PipelineStage? @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  tasks    Task[]
+
+  @@index([templateId, position])
+}
+
+// =============================================================================
+// 11. MESSAGING (case-bound, never personal inbox) (FR-13)
+// =============================================================================
+
+model MessageThread {
+  id            String     @id @default(cuid())
+  firmId        String
+  clientId      String
+  caseId        String? // null = client-level general thread
+  type          ThreadType @default(CLIENT)
+  subject       String?
+  isArchived    Boolean    @default(false)
+  lastMessageAt DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  firm     Firm      @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  client   Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case     Case?     @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  messages Message[]
+
+  @@index([firmId, lastMessageAt])
+  @@index([caseId, type])
+  @@index([clientId])
+}
+
+model Message {
+  id                String            @id @default(cuid())
+  firmId            String
+  threadId          String
+  authorId          String?
+  authorType        MessageAuthorType
+  channel           MessageChannel    @default(PORTAL)
+  body              String
+  bodyHtml          String?
+  isInternalNote    Boolean           @default(false)
+  externalMessageId String? // inbound email/SMS id
+  replyToId         String?
+  editedAt          DateTime?
+  deletedAt         DateTime?
+  createdAt         DateTime          @default(now())
+
+  firm        Firm                @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  thread      MessageThread       @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  author      User?               @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  replyTo     Message?            @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies     Message[]           @relation("MessageReplies")
+  attachments MessageAttachment[]
+  receipts    MessageReceipt[]
+
+  @@index([threadId, createdAt])
+  @@index([firmId, createdAt])
+}
+
+model MessageAttachment {
+  id         String   @id @default(cuid())
+  messageId  String
+  fileId     String?
+  documentId String? // when attachment is promoted to a case document
+  createdAt  DateTime @default(now())
+
+  message  Message     @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  file     StoredFile? @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  document Document?   @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([messageId])
+}
+
+model MessageReceipt {
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, userId])
+  @@index([userId])
+}
+
+// =============================================================================
+// 12. APPOINTMENTS & CALENDAR
+// =============================================================================
+
+model AppointmentType {
+  id               String                  @id @default(cuid())
+  firmId           String
+  name             String
+  description      String?
+  durationMinutes  Int                     @default(30)
+  bufferMinutes    Int                     @default(0)
+  locationType     AppointmentLocationType @default(PHONE)
+  isClientBookable Boolean                 @default(true)
+  color            String?
+  isActive         Boolean                 @default(true)
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  firm         Firm          @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+
+  @@unique([firmId, name])
+}
+
+model Appointment {
+  id                      String                  @id @default(cuid())
+  firmId                  String
+  typeId                  String?
+  hostId                  String // FirmMember
+  clientId                String?
+  caseId                  String?
+  callLogId               String? // booked by Voice AI
+  title                   String
+  description             String?
+  startAt                 DateTime
+  endAt                   DateTime
+  timezone                String
+  status                  AppointmentStatus       @default(SCHEDULED)
+  locationType            AppointmentLocationType @default(PHONE)
+  location                String?
+  meetingUrl              String?
+  bookedById              String?
+  bookedVia               BookingSource           @default(TEAM)
+  externalCalendarEventId String?
+  cancelledAt             DateTime?
+  cancelReason            String?
+  rescheduledFromId       String?
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+
+  firm            Firm                  @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  type            AppointmentType?      @relation(fields: [typeId], references: [id], onDelete: SetNull)
+  host            FirmMember            @relation("AppointmentHost", fields: [hostId], references: [id], onDelete: Restrict)
+  client          Client?               @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case            Case?                 @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  callLog         CallLog?              @relation(fields: [callLogId], references: [id], onDelete: SetNull)
+  bookedBy        User?                 @relation("AppointmentBookedBy", fields: [bookedById], references: [id], onDelete: SetNull)
+  rescheduledFrom Appointment?          @relation("Reschedule", fields: [rescheduledFromId], references: [id], onDelete: SetNull)
+  rescheduledTo   Appointment[]         @relation("Reschedule")
+  attendees       AppointmentAttendee[]
+  reminders       Reminder[]
+
+  @@index([firmId, startAt])
+  @@index([hostId, startAt])
+  @@index([clientId])
+  @@index([caseId])
+}
+
+model AppointmentAttendee {
+  id            String           @id @default(cuid())
+  appointmentId String
+  userId        String?
+  name          String?
+  email         String?
+  phone         String?
+  response      AttendeeResponse @default(PENDING)
+  createdAt     DateTime         @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  user        User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([appointmentId])
+}
+
+/// Weekly working hours for booking
+model AvailabilityRule {
+  id          String   @id @default(cuid())
+  memberId    String
+  dayOfWeek   Int // 0=Sun..6=Sat
+  startMinute Int // minutes from midnight
+  endMinute   Int
+  timezone    String
+  createdAt   DateTime @default(now())
+
+  member FirmMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, dayOfWeek])
+}
+
+model AvailabilityException {
+  id          String   @id @default(cuid())
+  memberId    String
+  startAt     DateTime
+  endAt       DateTime
+  isAvailable Boolean  @default(false) // false = time off
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  member FirmMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, startAt])
+}
+
+/// LATER: two-way Google/Outlook sync
+model CalendarConnection {
+  id                    String           @id @default(cuid())
+  memberId              String
+  provider              CalendarProvider
+  externalAccountEmail  String?
+  accessTokenEncrypted  String?
+  refreshTokenEncrypted String?
+  tokenExpiresAt        DateTime?
+  calendarId            String?
+  syncToken             String?
+  lastSyncedAt          DateTime?
+  isActive              Boolean          @default(true)
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  member FirmMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, provider])
+}
+
+// =============================================================================
+// 13. NOTIFICATIONS, TEMPLATES, REMINDERS (FR-14, FR-24)
+// =============================================================================
+
+/// Email/SMS templates. firmId null = platform default.
+model NotificationTemplate {
+  id        String              @id @default(cuid())
+  firmId    String?
+  eventKey  String // "document.requested", "draft.ready", "signature.needed", "invoice.due"
+  channel   NotificationChannel
+  locale    String              @default("en")
+  name      String
+  subject   String?
+  bodyText  String
+  bodyHtml  String?
+  isActive  Boolean             @default(true)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  firm          Firm?          @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  notifications Notification[]
+  reminderRules ReminderRule[]
+
+  @@unique([firmId, eventKey, channel, locale])
+}
+
+/// Outbound notification log (also usage source for Email/SMS dashboard)
+model Notification {
+  id                String              @id @default(cuid())
+  firmId            String
+  userId            String?
+  templateId        String?
+  eventKey          String
+  channel           NotificationChannel
+  toAddress         String?
+  subject           String?
+  body              String?
+  payload           Json?
+  caseId            String? // scalar for reporting, no FK
+  status            NotificationStatus  @default(QUEUED)
+  provider          String?
+  providerMessageId String?
+  error             String?
+  segments          Int? // SMS segments for billing
+  scheduledFor      DateTime?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime? // in-app
+  createdAt         DateTime            @default(now())
+
+  firm     Firm                  @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  user     User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  template NotificationTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@index([firmId, channel, createdAt])
+  @@index([userId, readAt])
+  @@index([providerMessageId])
+}
+
+model NotificationPreference {
+  id        String              @id @default(cuid())
+  userId    String
+  firmId    String?
+  eventKey  String
+  channel   NotificationChannel
+  enabled   Boolean             @default(true)
+  updatedAt DateTime            @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, firmId, eventKey, channel])
+}
+
+/// Firm reminder policy, e.g. unpaid invoice: remind at +3, +7, +14 days
+model ReminderRule {
+  id           String                @id @default(cuid())
+  firmId       String
+  target       ReminderTarget
+  name         String
+  offsetsDays  Int[] // relative to createdAt/dueDate
+  relativeTo   String                @default("dueDate")
+  channels     NotificationChannel[]
+  templateId   String?
+  maxReminders Int                   @default(3)
+  quietHours   Json?
+  isActive     Boolean               @default(true)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  firm      Firm                  @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  template  NotificationTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  reminders Reminder[]
+
+  @@index([firmId, target, isActive])
+}
+
+/// Scheduled reminder instances (worker polls scheduledFor)
+model Reminder {
+  id                 String              @id @default(cuid())
+  firmId             String
+  ruleId             String?
+  target             ReminderTarget
+  caseId             String?
+  documentRequestId  String?
+  signatureRequestId String?
+  invoiceId          String?
+  appointmentId      String?
+  taskId             String?
+  channel            NotificationChannel
+  scheduledFor       DateTime
+  status             ReminderStatus      @default(SCHEDULED)
+  attempt            Int                 @default(1)
+  sentAt             DateTime?
+  notificationId     String?
+  error              String?
+  createdAt          DateTime            @default(now())
+
+  firm             Firm              @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  rule             ReminderRule?     @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  case             Case?             @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  documentRequest  DocumentRequest?  @relation(fields: [documentRequestId], references: [id], onDelete: Cascade)
+  signatureRequest SignatureRequest? @relation(fields: [signatureRequestId], references: [id], onDelete: Cascade)
+  invoice          Invoice?          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  appointment      Appointment?      @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  task             Task?             @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([status, scheduledFor])
+  @@index([firmId, target])
+}
+
+// =============================================================================
+// 14. VOICE AI (Week 8)
+// =============================================================================
+
+model VoiceAgentConfig {
+  id                  String   @id @default(cuid())
+  firmId              String   @unique
+  enabled             Boolean  @default(false)
+  provider            String? // "vapi", "retell", "twilio", ...
+  providerAgentId     String?
+  greeting            String?
+  afterHoursMessage   String?
+  businessHours       Json? // {"mon":[["09:00","17:00"]],...}
+  timezone            String?
+  languages           String[] @default(["en"])
+  voiceId             String?
+  systemPrompt        String?
+  escalationRules     Json? // keywords, intents, VIP clients -> transfer
+  escalationPhone     String?
+  canBookAppointments Boolean  @default(true)
+  canCreateTasks      Boolean  @default(true)
+  recordCalls         Boolean  @default(true)
+  transcribeCalls     Boolean  @default(true)
+  maxCallMinutes      Int      @default(15)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+}
+
+model PhoneNumber {
+  id          String             @id @default(cuid())
+  firmId      String
+  e164        String             @unique
+  provider    String // twilio, telnyx
+  providerSid String?
+  purpose     PhoneNumberPurpose @default(VOICE_AND_SMS)
+  label       String?
+  isActive    Boolean            @default(true)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  firm     Firm      @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  callLogs CallLog[]
+
+  @@index([firmId])
+}
+
+model CallLog {
+  id               String         @id @default(cuid())
+  firmId           String
+  phoneNumberId    String?
+  clientId         String? // matched caller
+  caseId           String?
+  userId           String? // matched portal user
+  providerCallId   String?        @unique
+  direction        CallDirection  @default(INBOUND)
+  fromNumber       String
+  toNumber         String
+  status           CallStatus     @default(RINGING)
+  handledByAi      Boolean        @default(true)
+  language         String?
+  startedAt        DateTime       @default(now())
+  answeredAt       DateTime?
+  endedAt          DateTime?
+  durationSec      Int?
+  recordingFileId  String?
+  transcriptText   String?
+  summary          String?
+  intent           String? // "status_check", "book_appointment", "document_question"
+  sentiment        String?
+  escalated        Boolean        @default(false)
+  escalatedToId    String?
+  escalationReason String?
+  followUpStatus   FollowUpStatus @default(NONE)
+  costCents        Int?
+  metadata         Json?
+  createdAt        DateTime       @default(now())
+
+  firm         Firm                    @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  phoneNumber  PhoneNumber?            @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
+  client       Client?                 @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case         Case?                   @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  user         User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  recording    StoredFile?             @relation("CallRecording", fields: [recordingFileId], references: [id], onDelete: SetNull)
+  escalatedTo  FirmMember?             @relation("CallEscalatedTo", fields: [escalatedToId], references: [id], onDelete: SetNull)
+  segments     CallTranscriptSegment[]
+  tasks        Task[]
+  appointments Appointment[]
+
+  @@index([firmId, startedAt])
+  @@index([clientId])
+  @@index([firmId, followUpStatus])
+}
+
+model CallTranscriptSegment {
+  id      String @id @default(cuid())
+  callId  String
+  speaker String // "ai", "caller", "agent"
+  startMs Int
+  endMs   Int
+  text    String
+
+  call CallLog @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId, startMs])
+}
+
+// =============================================================================
+// 15. REPORTING, IMPORT, AUDIT
+// =============================================================================
+
+/// Scheduled firm-level reports (FR-27)
+model ReportSchedule {
+  id          String          @id @default(cuid())
+  firmId      String
+  name        String
+  type        ReportType
+  frequency   ReportFrequency @default(WEEKLY)
+  cronExpr    String?
+  timezone    String?
+  recipients  String[]
+  filters     Json?
+  format      String          @default("pdf") // pdf, csv, xlsx
+  isActive    Boolean         @default(true)
+  lastRunAt   DateTime?
+  nextRunAt   DateTime?
+  createdById String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  firm Firm        @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  runs ReportRun[]
+
+  @@index([isActive, nextRunAt])
+}
+
+model ReportRun {
+  id          String     @id @default(cuid())
+  firmId      String
+  scheduleId  String?
+  type        ReportType
+  status      JobStatus  @default(QUEUED)
+  snapshot    Json? // computed metrics
+  fileId      String?
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime   @default(now())
+
+  firm     Firm            @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  schedule ReportSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  file     StoredFile?     @relation(fields: [fileId], references: [id], onDelete: SetNull)
+
+  @@index([firmId, createdAt])
+}
+
+/// Bulk CSV import with mapping + validation before commit (FR-29)
+model ImportJob {
+  id            String       @id @default(cuid())
+  firmId        String
+  type          ImportType   @default(CLIENTS)
+  status        ImportStatus @default(UPLOADED)
+  fileId        String?
+  columnMapping Json?
+  options       Json? // e.g. create cases for tax year, default preparer
+  totalRows     Int          @default(0)
+  validRows     Int          @default(0)
+  invalidRows   Int          @default(0)
+  importedRows  Int          @default(0)
+  createdById   String?
+  committedAt   DateTime?
+  error         String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  firm      Firm        @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  file      StoredFile? @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  createdBy User?       @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  rows      ImportRow[]
+  clients   Client[]
+
+  @@index([firmId, createdAt])
+}
+
+model ImportRow {
+  id              String          @id @default(cuid())
+  jobId           String
+  rowNumber       Int
+  raw             Json
+  normalized      Json?
+  status          ImportRowStatus @default(PENDING)
+  errors          Json? // [{field,message}]
+  createdEntityId String?
+
+  job ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, rowNumber])
+  @@index([jobId, status])
+}
+
+/// Append-only audit log: who accessed/edited what, when (FR-28). Consider monthly partitioning.
+model AuditLog {
+  id              String    @id @default(cuid())
+  firmId          String
+  actorId         String?
+  actorType       ActorType @default(USER)
+  action          String // "case.reassigned", "document.downloaded", "draft.approved"
+  entityType      String // "Case", "Document", ...
+  entityId        String?
+  caseId          String?
+  summary         String? // human readable line for UI
+  before          Json?
+  after           Json?
+  metadata        Json?
+  ipAddress       String?
+  userAgent       String?
+  requestId       String?
+  isClientVisible Boolean   @default(false) // for client-facing activity timeline
+  createdAt       DateTime  @default(now())
+
+  firm  Firm  @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  case  Case? @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  @@index([firmId, createdAt])
+  @@index([entityType, entityId])
+  @@index([caseId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+// =============================================================================
+// 16. INTEGRATIONS, WEBHOOKS, API
+// =============================================================================
+
+model Integration {
+  id                String              @id @default(cuid())
+  firmId            String
+  provider          IntegrationProvider
+  status            IntegrationStatus   @default(PENDING)
+  externalAccountId String?
+  configEncrypted   String?
+  settings          Json?
+  lastSyncAt        DateTime?
+  lastError         String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([firmId, provider])
+}
+
+/// Inbound webhooks (Stripe, Twilio, e-sign) for idempotency + replay
+model WebhookEvent {
+  id          String             @id @default(cuid())
+  provider    String
+  externalId  String
+  eventType   String
+  firmId      String? // resolved tenant (scalar, may be unknown on receipt)
+  payload     Json
+  status      WebhookEventStatus @default(RECEIVED)
+  attempts    Int                @default(0)
+  error       String?
+  receivedAt  DateTime           @default(now())
+  processedAt DateTime?
+
+  @@unique([provider, externalId])
+  @@index([status, receivedAt])
+}
+
+/// LATER: outbound webhooks for firm integrations (Zapier etc.)
+model WebhookEndpoint {
+  id              String   @id @default(cuid())
+  firmId          String
+  url             String
+  events          String[]
+  secretEncrypted String
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  firm       Firm              @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+}
+
+model WebhookDelivery {
+  id           String    @id @default(cuid())
+  endpointId   String
+  eventType    String
+  payload      Json
+  responseCode Int?
+  responseBody String?
+  attempt      Int       @default(1)
+  succeededAt  DateTime?
+  nextRetryAt  DateTime?
+  createdAt    DateTime  @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId, createdAt])
+  @@index([nextRetryAt])
+}
+
+/// LATER: public API access
+model ApiKey {
+  id          String    @id @default(cuid())
+  firmId      String
+  name        String
+  prefix      String
+  keyHash     String    @unique
+  scopes      String[]
+  createdById String?
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  firm      Firm  @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  createdBy User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([firmId])
+}
+
+// =============================================================================
+// 17. PLATFORM SAAS BILLING & USAGE
+// =============================================================================
+
+model Plan {
+  id                   String          @id @default(cuid())
+  key                  String          @unique
+  name                 String
+  priceCents           Int
+  interval             BillingInterval @default(MONTH)
+  stripePriceId        String?         @unique
+  includedSmsPerMonth  Int?
+  includedVoiceMinutes Int?
+  includedStorageGb    Int?
+  maxSeats             Int? // null = unlimited
+  features             String[]
+  isPublic             Boolean         @default(true)
+  isActive             Boolean         @default(true)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  subscriptions FirmSubscription[]
+}
+
+model FirmSubscription {
+  id                   String             @id @default(cuid())
+  firmId               String             @unique
+  planId               String
+  status               SubscriptionStatus @default(TRIALING)
+  stripeCustomerId     String?            @unique
+  stripeSubscriptionId String?            @unique
+  seats                Int?
+  trialEndsAt          DateTime?
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  cancelledAt          DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Restrict)
+}
+
+/// Aggregated usage for the Email/SMS/Voice usage dashboard
+model UsageRecord {
+  id          String      @id @default(cuid())
+  firmId      String
+  metric      UsageMetric
+  periodStart DateTime    @db.Date
+  quantity    BigInt      @default(0)
+  costCents   Int?
+  updatedAt   DateTime    @updatedAt
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([firmId, metric, periodStart])
+}
+
+// =============================================================================
+// 18. EXTENSIBILITY: TAGS, NOTES, CUSTOM FIELDS
+// =============================================================================
+
+model Tag {
+  id        String   @id @default(cuid())
+  firmId    String
+  name      String
+  color     String?
+  createdAt DateTime @default(now())
+
+  firm    Firm        @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  clients ClientTag[]
+  cases   CaseTag[]
+
+  @@unique([firmId, name])
+}
+
+model ClientTag {
+  clientId String
+  tagId    String
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([clientId, tagId])
+  @@index([tagId])
+}
+
+model CaseTag {
+  caseId String
+  tagId  String
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([caseId, tagId])
+  @@index([tagId])
+}
+
+/// Internal staff notes on client or case (never client-visible)
+model Note {
+  id         String     @id @default(cuid())
+  firmId     String
+  entityType NoteEntity
+  entityId   String
+  authorId   String?
+  body       String
+  isPinned   Boolean    @default(false)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  deletedAt  DateTime?
+
+  firm   Firm  @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+}
+
+model CustomFieldDefinition {
+  id              String            @id @default(cuid())
+  firmId          String
+  entity          CustomFieldEntity
+  key             String
+  label           String
+  type            CustomFieldType
+  options         String[]
+  isRequired      Boolean           @default(false)
+  isClientVisible Boolean           @default(false)
+  position        Int               @default(0)
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  firm   Firm               @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  values CustomFieldValue[]
+
+  @@unique([firmId, entity, key])
+}
+
+model CustomFieldValue {
+  id           String   @id @default(cuid())
+  definitionId String
+  entityId     String // Client.id / Case.id / Task.id
+  value        Json
+  updatedAt    DateTime @updatedAt
+
+  definition CustomFieldDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+
+  @@unique([definitionId, entityId])
+  @@index([entityId])
+}

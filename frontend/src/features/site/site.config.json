@@ -1,0 +1,121 @@
+{
+  "appName": "Qicktaxnbook365",
+  "appType": "Multi-tenant tax practice management platform — firm onboarding, team management, and a client self-serve portal.",
+  "tagline": "Tax practice management for modern firms",
+  "title": "Qicktaxnbook365 — Tax Practice Management Platform",
+  "description": "Centralized tax practice management: onboard firms, manage your team, and give clients a secure self-serve portal.",
+  "locale": "en_US",
+  "language": "en-US",
+  "domain": "https://qicktaxnbook365.com",
+  "canonicalPath": "/",
+  "applicationCategory": "BusinessApplication",
+  "audience": "Tax preparation firms and their clients",
+  "keywords": [
+    "tax practice management",
+    "tax preparer software",
+    "client portal",
+    "tax firm software",
+    "multi-tenant saas"
+  ],
+  "features": [
+    "Firm onboarding with unique EIN/SSN identity verification",
+    "Team management with role-based access",
+    "Secure client self-serve portal",
+    "Email OTP verified client login",
+    "White-label ready branding"
+  ],
+  "languages": {
+    "supported": ["en", "bn", "ar", "fr", "es", "zh"],
+    "default": "en",
+    "locales": {
+      "en": {
+        "code": "en",
+        "name": "English",
+        "nativeName": "English",
+        "locale": "en_US",
+        "direction": "ltr"
+      },
+      "bn": {
+        "code": "bn",
+        "name": "Bengali",
+        "nativeName": "বাংলা",
+        "locale": "bn_BD",
+        "direction": "ltr"
+      },
+      "ar": {
+        "code": "ar",
+        "name": "Arabic",
+        "nativeName": "العربية",
+        "locale": "ar_SA",
+        "direction": "rtl"
+      },
+      "fr": {
+        "code": "fr",
+        "name": "French",
+        "nativeName": "Français",
+        "locale": "fr_FR",
+        "direction": "ltr"
+      },
+      "es": {
+        "code": "es",
+        "name": "Spanish",
+        "nativeName": "Español",
+        "locale": "es_ES",
+        "direction": "ltr"
+      },
+      "zh": {
+        "code": "zh",
+        "name": "Chinese",
+        "nativeName": "简体中文",
+        "locale": "zh_CN",
+        "direction": "ltr"
+      }
+    }
+  },
+  "organization": {
+    "name": "Qicktaxnbook365",
+    "legalName": "Qicktaxnbook365",
+    "url": "https://qicktaxnbook365.com",
+    "logo": "/logo.svg",
+    "description": "Multi-tenant tax practice management platform.",
+    "foundingDate": "2026-01-01",
+    "email": "support@qicktaxnbook365.com",
+    "phone": "+1-234-567-8900",
+    "address": {
+      "street": "Remote",
+      "city": "Austin",
+      "region": "TX",
+      "postalCode": "78701",
+      "country": "United States",
+      "countryCode": "US"
+    }
+  },
+  "contact": {
+    "supportEmail": "support@qicktaxnbook365.com",
+    "salesEmail": "sales@qicktaxnbook365.com",
+    "phoneNumber": "+1-234-567-8900"
+  },
+  "social": {},
+  "images": {
+    "og": "/icon.svg",
+    "logo": "/logo.svg",
+    "ogWidth": 1200,
+    "ogHeight": 630
+  },
+  "icons": {
+    "favicon": "/favicon.ico",
+    "svg": "/icon.svg",
+    "appleTouchIcon": "/logo.svg"
+  },
+  "theme": {
+    "dark": "#09090b",
+    "light": "#ffffff"
+  },
+  "pricing": {
+    "model": "subscription",
+    "currency": "USD",
+    "minPrice": "0",
+    "maxPrice": "0"
+  },
+  "manifest": "/manifest.webmanifest"
+}
