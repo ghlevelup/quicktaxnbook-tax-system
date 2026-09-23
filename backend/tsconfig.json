@@ -2,7 +2,6 @@
   "compilerOptions": {
     "target": "es2022",
     "outDir": "./build",
-    "declaration": true,
     "module": "commonjs",
     "types": ["node"],
     "resolveJsonModule": true,
@@ -16,5 +15,5 @@
       "@/*": ["src/*"]
     }
   },
-  "exclude": ["node_modules", "build", "production", "api", "test", "scripts"]
+  "exclude": ["node_modules", "build", "production"]
 }
