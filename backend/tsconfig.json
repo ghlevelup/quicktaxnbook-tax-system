@@ -15,5 +15,5 @@
       "@/*": ["src/*"]
     }
   },
-  "exclude": ["node_modules", "build", "production"]
+  "exclude": ["node_modules", "build", "production", "api", "test", "scripts"]
 }
