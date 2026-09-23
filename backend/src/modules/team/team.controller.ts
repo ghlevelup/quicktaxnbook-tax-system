@@ -13,7 +13,7 @@ export const createTeamMember = catchAsync(async (req) => {
   const result = await teamService.createTeamMember(actor.firmId as string, actor.userId, body);
   return {
     statusCode: httpStatus.CREATED,
-    message: 'Team member created — copy their password now, it will not be shown again',
+    message: 'Team member created. Copy their password now, it will not be shown again',
     data: result,
   };
 });
@@ -78,7 +78,7 @@ export const resetTeamMemberPassword = catchAsync(async (req) => {
   const result = await teamService.resetTeamMemberPassword(actor.firmId as string, memberId);
   return {
     statusCode: httpStatus.OK,
-    message: 'Password reset — copy it now, it will not be shown again',
+    message: 'Password reset. Copy it now, it will not be shown again',
     data: result,
   };
 });

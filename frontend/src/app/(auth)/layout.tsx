@@ -27,7 +27,7 @@ const AuthLayout = async ({ children }: { children: ReactNode }) => {
           </h2>
           <p className="text-sm text-primary-foreground/85">
             Onboard your firm, manage your team, and give clients a secure
-            self-serve portal — all in one platform.
+            self-serve portal, all in one platform.
           </p>
         </div>
       </section>

@@ -6,7 +6,7 @@ import type { PaginatedResult } from '@/libs/types';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { CreateClientInput } from '@/features/clients/schemas/client';
-import type { ClientRecord } from '@/features/clients/types';
+import type { ClientRecord, ClientStatus } from '@/features/clients/types';
 
 const clientsKey = () => ['clients'] as const;
 
@@ -36,6 +36,23 @@ export function useCreateClient() {
   });
 }
 
+export function useSetClientStatus() {
+  const queryClient = useQueryClient();
+  return useApiMutation<
+    ClientRecord,
+    { clientId: string; status: Extract<ClientStatus, 'ACTIVE' | 'INACTIVE'> }
+  >({
+    mutationFn: ({ clientId, status }) =>
+      apiFetch(`/clients/${clientId}/status`, {
+        method: 'PATCH',
+        body: { status },
+      }),
+    onSuccessData: () => {
+      void queryClient.invalidateQueries({ queryKey: clientsKey() });
+    },
+  });
+}
+
 export function useCreateOnboardingLink() {
   return useApiMutation<
     { onboardingUrl: string; expiresAt: string },
@@ -43,6 +60,5 @@ export function useCreateOnboardingLink() {
   >({
     mutationFn: ({ clientId }) =>
       apiFetch(`/clients/${clientId}/onboarding-link`, { method: 'POST' }),
-    successMessage: false,
   });
 }

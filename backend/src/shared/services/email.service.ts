@@ -2,6 +2,12 @@ import nodemailer from 'nodemailer';
 
 import config from '@/config/config';
 import logger from '@/config/logger';
+import {
+  firmAdminWelcomeEmailTemplate,
+  onboardingLinkEmailTemplate,
+  otpEmailTemplate,
+  passwordResetOtpEmailTemplate,
+} from './email-templates';
 
 export const transport = nodemailer.createTransport(config.email.smtp);
 /* istanbul ignore next */
@@ -29,7 +35,7 @@ export const sendEmail = async (
 export const sendOtpEmail = async (to: string, code: string, expiresInMinutes: number) => {
   const subject = `${code} is your ${config.appName} login code`;
   const text = `Your login code is: ${code}\n\nThis code expires in ${expiresInMinutes} minutes. If you didn't request this, you can safely ignore this email.`;
-  await sendEmail(to, subject, text);
+  await sendEmail(to, subject, text, otpEmailTemplate(code, expiresInMinutes));
 };
 
 export const sendFirmAdminWelcomeEmail = async (to: string, firmName: string, loginUrl: string) => {
@@ -41,7 +47,7 @@ A firm account for "${firmName}" has been created and you've been set up as the 
 Login here: ${loginUrl}
 
 Your platform administrator will share your login credentials with you separately.`;
-  await sendEmail(to, subject, text);
+  await sendEmail(to, subject, text, firmAdminWelcomeEmailTemplate(firmName, loginUrl));
 };
 
 export const sendOnboardingLinkEmail = async (
@@ -57,15 +63,19 @@ ${firmName} has invited you to set up your client portal account.
 Complete your onboarding here: ${onboardingUrl}
 
 This link will expire, so please complete it soon. If you weren't expecting this, you can ignore this email.`;
-  await sendEmail(to, subject, text);
+  await sendEmail(to, subject, text, onboardingLinkEmailTemplate(firmName, onboardingUrl));
 };
 
-export const sendPasswordResetEmail = async (to: string, resetUrl: string) => {
-  const subject = `Reset your ${config.appName} password`;
+export const sendPasswordResetOtpEmail = async (
+  to: string,
+  code: string,
+  expiresInMinutes: number
+) => {
+  const subject = `${code} is your ${config.appName} password reset code`;
   const text = `A password reset was requested for your account.
 
-Reset your password here: ${resetUrl}
+Your reset code is: ${code}
 
-If you did not request this, you can safely ignore this email — your password will not change.`;
-  await sendEmail(to, subject, text);
+This code expires in ${expiresInMinutes} minutes. If you did not request this, you can safely ignore this email. Your password will not change.`;
+  await sendEmail(to, subject, text, passwordResetOtpEmailTemplate(code, expiresInMinutes));
 };

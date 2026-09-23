@@ -1,6 +1,6 @@
 import express from 'express';
 
-import { authenticate, requireFirmStaff } from '@/shared/middlewares/auth';
+import { authenticate, requireFirmAdmin, requireFirmStaff } from '@/shared/middlewares/auth';
 
 import * as clientController from './client.controller';
 
@@ -11,5 +11,6 @@ router.use(authenticate(), requireFirmStaff);
 router.route('/').post(clientController.createClient).get(clientController.listClients);
 router.get('/:clientId', clientController.getClient);
 router.post('/:clientId/onboarding-link', clientController.createOnboardingLink);
+router.patch('/:clientId/status', requireFirmAdmin, clientController.updateClientStatus);
 
 export default router;

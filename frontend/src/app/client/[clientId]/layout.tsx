@@ -13,7 +13,10 @@ export default async function ClientPortalLayout({
   params,
 }: ClientLayoutProps) {
   const { clientId } = await params;
-  await requireClientAccess(clientId);
+  const user = await requireClientAccess(clientId);
+  const clientName = user.clients?.find(
+    (access) => access.client.id === clientId,
+  )?.client.displayName;
 
   const navGroups: AppNavGroup[] = [
     {
@@ -33,6 +36,7 @@ export default async function ClientPortalLayout({
       brandHref={`/client/${clientId}/dashboard`}
       navGroups={navGroups}
       profileHref={`/client/${clientId}/profile`}
+      contextLabel={clientName}
     >
       {children}
     </AreaShell>

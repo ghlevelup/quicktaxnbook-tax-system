@@ -85,18 +85,19 @@ export const forgotPassword = catchAsync(async (req) => {
   const {
     body: { email },
   } = await zParse(authSchema.forgotPasswordSchema, req);
-  await authService.forgotPassword(email);
+  const result = await authService.forgotPassword(email, requestMeta(req));
   return {
     statusCode: httpStatus.OK,
-    message: 'If an account exists for this email, a reset link has been sent',
+    message: 'If an account exists for this email, a verification code has been sent',
+    data: result,
   };
 });
 
 export const resetPassword = catchAsync(async (req) => {
   const {
-    body: { token, password },
+    body: { resetToken, otp, password },
   } = await zParse(authSchema.resetPasswordSchema, req);
-  await authService.resetPassword(token, password);
+  await authService.resetPassword(resetToken, otp, password);
   return {
     statusCode: httpStatus.OK,
     message: 'Password reset successfully',

@@ -45,7 +45,7 @@ export function OnboardingLinkAction({
         <DialogHeader>
           <DialogTitle>Onboarding link for {clientName}</DialogTitle>
           <DialogDescription>
-            Send this link to your client — it lets them set up their portal
+            Send this link to your client so they can set up their portal
             account. Valid for 7 days.
           </DialogDescription>
         </DialogHeader>

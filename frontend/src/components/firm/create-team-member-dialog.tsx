@@ -14,6 +14,7 @@ import {
 import { Input } from '@/components/ui/input';
 import InputError from '@/components/ui/input-error';
 import { Label } from '@/components/ui/label';
+import { PhoneInput } from '@/components/ui/phone-input';
 import {
   Select,
   SelectContent,
@@ -80,7 +81,7 @@ export function CreateTeamMemberDialog() {
           <DialogDescription>
             {result
               ? `${result.email} can now sign in.`
-              : "They'll get a generated password — copy it after creating."}
+              : "They'll get a generated password you can copy after creating."}
           </DialogDescription>
         </DialogHeader>
 
@@ -89,7 +90,7 @@ export function CreateTeamMemberDialog() {
             <CopyReveal
               label="Temporary password"
               value={result.password}
-              description="Share this with them however you prefer — it will not be shown again."
+              description="Share this with them however you prefer."
             />
             <DialogFooter className="mt-2">
               <Button onClick={() => onOpenChange(false)}>Done</Button>
@@ -123,7 +124,17 @@ export function CreateTeamMemberDialog() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="phone">Phone</Label>
-                <Input id="phone" type="tel" {...form.register('phone')} />
+                <Controller
+                  control={form.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <PhoneInput
+                      id="phone"
+                      value={field.value}
+                      onChange={field.onChange}
+                    />
+                  )}
+                />
               </div>
               <div className="grid gap-2">
                 <Label>Role</Label>

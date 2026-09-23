@@ -124,7 +124,7 @@ export function TeamMemberActions({ member }: { member: TeamMember }) {
             <DialogTitle>Reset password</DialogTitle>
             <DialogDescription>
               {resetPassword
-                ? 'Copy the new password now — it will not be shown again.'
+                ? 'Copy the new password now. It will not be shown again.'
                 : `Generate a new password for ${member.user.firstName} ${member.user.lastName}? Their current password stops working immediately.`}
             </DialogDescription>
           </DialogHeader>

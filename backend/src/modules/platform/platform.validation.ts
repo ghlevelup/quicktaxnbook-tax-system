@@ -40,7 +40,7 @@ export const onboardFirmSchema = z.object({
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            'Provide at least the firm EIN or the owner SSN — one is required to uniquely identify this firm',
+            'Provide at least the firm EIN or the owner SSN. One is required to uniquely identify this firm',
           path: ['firm', 'ein'],
         });
       }

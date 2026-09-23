@@ -8,6 +8,7 @@ interface AreaShellProps {
   brandHref: string;
   navGroups: AppNavGroup[];
   profileHref: string;
+  contextLabel?: string;
 }
 
 /** Shared chrome (sidebar + topbar + content well) for the platform/firm/client areas. */
@@ -16,6 +17,7 @@ export function AreaShell({
   brandHref,
   navGroups,
   profileHref,
+  contextLabel,
 }: AreaShellProps) {
   return (
     <AppShell variant="sidebar">
@@ -23,6 +25,7 @@ export function AreaShell({
         brandHref={brandHref}
         navGroups={navGroups}
         profileHref={profileHref}
+        contextLabel={contextLabel}
       />
       <div className="relative flex h-svh max-h-svh w-full min-w-0 flex-1 overflow-hidden bg-background">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-app-header md:pt-0">

@@ -79,8 +79,15 @@ const corsOptions: cors.CorsOptions = {
 app.use(cors(corsOptions));
 
 // serve locally-uploaded files (avatars, logos, ...)
+// helmet's default Cross-Origin-Resource-Policy: same-origin would otherwise
+// block the frontend (different port/origin in dev, different subdomain in
+// prod) from rendering these images at all — relax it for this route only.
 app.use(
   `/${config.upload.localDir}`,
+  (_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    next();
+  },
   express.static(path.join(process.cwd(), config.upload.localDir))
 );
 

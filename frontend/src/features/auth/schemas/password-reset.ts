@@ -7,6 +7,7 @@ export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 
 export const resetPasswordSchema = z
   .object({
+    otp: z.string().length(6, 'Enter the 6-digit code'),
     password: z
       .string()
       .min(8, 'Password must be at least 8 characters')

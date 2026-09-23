@@ -1,5 +1,6 @@
 'use client';
 
+import { ClientStatusAction } from '@/components/firm/client-status-action';
 import { ClientStatusBadge } from '@/components/firm/client-status-badge';
 import { CreateClientDialog } from '@/components/firm/create-client-dialog';
 import { OnboardingLinkAction } from '@/components/firm/onboarding-link-action';
@@ -61,7 +62,7 @@ export default function ClientsPage() {
                   </TableCell>
                   <TableCell>{CLIENT_TYPE_LABELS[client.type]}</TableCell>
                   <TableCell className="text-muted-foreground">
-                    <div>{client.email || '—'}</div>
+                    <div>{client.email || 'N/A'}</div>
                     {client.phone ? (
                       <div className="text-xs">{client.phone}</div>
                     ) : null}
@@ -75,6 +76,10 @@ export default function ClientsPage() {
                         clientId={client.id}
                         clientName={client.displayName}
                       />
+                    ) : null}
+                    {client.status === 'ACTIVE' ||
+                    client.status === 'INACTIVE' ? (
+                      <ClientStatusAction client={client} />
                     ) : null}
                   </TableCell>
                 </TableRow>

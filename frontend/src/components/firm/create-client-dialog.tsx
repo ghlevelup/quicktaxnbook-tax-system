@@ -13,6 +13,7 @@ import {
 import { Input } from '@/components/ui/input';
 import InputError from '@/components/ui/input-error';
 import { Label } from '@/components/ui/label';
+import { PhoneInput } from '@/components/ui/phone-input';
 import {
   Select,
   SelectContent,
@@ -101,13 +102,31 @@ export function CreateClientDialog() {
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">
+                Email{form.watch('type') === 'INDIVIDUAL' ? ' *' : ''}
+              </Label>
               <Input id="email" type="email" {...form.register('email')} />
               <InputError message={form.formState.errors.email?.message} />
+              {form.watch('type') === 'INDIVIDUAL' ? (
+                <p className="text-xs text-muted-foreground">
+                  Used to prefill their onboarding, so they won&apos;t need to
+                  re-enter it.
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="phone">Phone</Label>
-              <Input id="phone" type="tel" {...form.register('phone')} />
+              <Controller
+                control={form.control}
+                name="phone"
+                render={({ field }) => (
+                  <PhoneInput
+                    id="phone"
+                    value={field.value}
+                    onChange={field.onChange}
+                  />
+                )}
+              />
             </div>
           </div>
 

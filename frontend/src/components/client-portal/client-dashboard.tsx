@@ -24,7 +24,7 @@ export function ClientDashboard({ clientId }: { clientId: string }) {
     <PageLayout>
       <PageHeader
         title={`Welcome, ${profile?.firstName ?? ''}`}
-        subtitle="Your client portal — more will show up here as your firm gets started on your return."
+        subtitle="Your client portal. More will show up here as your firm gets started on your return."
       />
 
       <Card>

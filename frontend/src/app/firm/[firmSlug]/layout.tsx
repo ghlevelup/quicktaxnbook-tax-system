@@ -54,6 +54,7 @@ export default async function FirmLayout({
       brandHref={`/firm/${firmSlug}/dashboard`}
       navGroups={navGroups}
       profileHref={`/firm/${firmSlug}/profile`}
+      contextLabel={user.membership?.firm.name}
     >
       {children}
     </AreaShell>

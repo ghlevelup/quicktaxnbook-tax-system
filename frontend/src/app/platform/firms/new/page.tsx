@@ -94,7 +94,7 @@ export default function NewFirmPage() {
             <CopyReveal
               label="Temporary password"
               value={result.temporaryPassword}
-              description="Share this with the firm admin however you prefer — it will not be shown again."
+              description="Share this with the firm admin however you prefer."
             />
             <div className="flex flex-wrap gap-2">
               <Button asChild>

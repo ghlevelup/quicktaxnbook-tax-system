@@ -85,6 +85,7 @@ enum OtpPurpose {
   SIGNATURE
   VERIFY_EMAIL
   VERIFY_PHONE
+  PASSWORD_RESET
 }
 
 enum MfaType {
@@ -1189,6 +1190,7 @@ model Client {
   legalName           String?
   email               String?
   phone               String?
+  website             String?
   preferredChannel    OtpChannel?
   preferredLanguage   String?             @default("en")
   // individual

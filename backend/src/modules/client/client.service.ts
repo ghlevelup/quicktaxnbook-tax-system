@@ -1,4 +1,4 @@
-import { ClientType } from '@prisma/client';
+import { ClientStatus, ClientType } from '@prisma/client';
 import { add } from 'date-fns';
 import httpStatus from 'http-status';
 
@@ -7,7 +7,14 @@ import config from '@/config/config';
 import { sendOnboardingLinkEmail } from '@/shared/services/email.service';
 import { createSession } from '@/shared/services/token.service';
 import ApiError from '@/shared/utils/api-error';
-import { generateSecureToken, hashSecret, hashToken } from '@/shared/utils/encryption';
+import {
+  encryptPII,
+  generateSecureToken,
+  hashSecret,
+  hashToken,
+  lastDigits,
+  normalizeDigits,
+} from '@/shared/utils/encryption';
 
 interface CreateClientInput {
   displayName: string;
@@ -73,6 +80,21 @@ export const getClient = async (firmId: string, clientId: string) => {
   return assertClient(firmId, clientId);
 };
 
+export const updateClientStatus = async (
+  firmId: string,
+  clientId: string,
+  status: Extract<ClientStatus, 'ACTIVE' | 'INACTIVE'>
+) => {
+  const client = await assertClient(firmId, clientId);
+  if (client.status !== 'ACTIVE' && client.status !== 'INACTIVE') {
+    throw new ApiError(
+      httpStatus.BAD_REQUEST,
+      `Can't change status while the client is ${client.status.toLowerCase()}`
+    );
+  }
+  return prisma.client.update({ where: { id: clientId }, data: { status } });
+};
+
 export const createOnboardingLink = async (
   firmId: string,
   clientId: string,
@@ -115,7 +137,7 @@ export const getOnboardingLinkInfo = async (token: string) => {
     where: { tokenHash },
     include: {
       firm: { select: { name: true } },
-      client: { select: { displayName: true, status: true } },
+      client: { select: { displayName: true, status: true, type: true, email: true, phone: true } },
     },
   });
 
@@ -127,12 +149,32 @@ export const getOnboardingLinkInfo = async (token: string) => {
     await prisma.onboardingLink.update({ where: { id: link.id }, data: { openedAt: new Date() } });
   }
 
+  // Best-effort split of the name the admin typed at creation, so the client
+  // sees it pre-filled on the onboarding form instead of starting from blank
+  // fields that don't match what the firm already has on file.
+  const [prefillFirstName, ...rest] = link.client.displayName.trim().split(/\s+/);
+  const prefillLastName = rest.join(' ') || undefined;
+
   return {
     firmName: link.firm.name,
     clientDisplayName: link.client.displayName,
+    clientType: link.client.type,
+    prefillFirstName: prefillFirstName || undefined,
+    prefillLastName,
+    prefillEmail: link.client.email,
+    prefillPhone: link.client.phone,
     expiresAt: link.expiresAt,
   };
 };
+
+interface OnboardingAddressInput {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  country?: string;
+}
 
 interface CompleteOnboardingInput {
   firstName: string;
@@ -140,6 +182,13 @@ interface CompleteOnboardingInput {
   email: string;
   phone: string;
   password: string;
+  business?: {
+    legalName: string;
+    ein?: string;
+    website?: string;
+    phone?: string;
+    address?: OnboardingAddressInput;
+  };
 }
 
 interface RequestMeta {
@@ -153,10 +202,18 @@ export const completeOnboarding = async (
   meta: RequestMeta
 ) => {
   const tokenHash = hashToken(token);
-  const link = await prisma.onboardingLink.findUnique({ where: { tokenHash } });
+  const link = await prisma.onboardingLink.findUnique({
+    where: { tokenHash },
+    include: { client: { select: { id: true, firmId: true, type: true } } },
+  });
 
   if (!link || link.revokedAt || link.completedAt || link.expiresAt < new Date()) {
     throw new ApiError(httpStatus.BAD_REQUEST, 'This onboarding link is invalid or has expired');
+  }
+
+  const isBusiness = link.client.type !== 'INDIVIDUAL';
+  if (isBusiness && !input.business?.legalName) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Business legal name is required');
   }
 
   const email = input.email.toLowerCase();
@@ -166,6 +223,7 @@ export const completeOnboarding = async (
   }
 
   const passwordHash = await hashSecret(input.password);
+  const einDigits = input.business?.ein ? normalizeDigits(input.business.ein) : undefined;
 
   const { user } = await prisma.$transaction(async (tx) => {
     const createdUser = await tx.user.create({
@@ -196,12 +254,40 @@ export const completeOnboarding = async (
     await tx.client.update({
       where: { id: link.clientId },
       data: {
-        email,
-        phone: input.phone,
         status: 'ACTIVE',
         onboardedAt: new Date(),
+        ...(isBusiness
+          ? {
+              legalName: input.business?.legalName,
+              website: input.business?.website,
+              phone: input.business?.phone,
+              email: undefined, // business email stays whatever the admin set at creation
+              einEncrypted: einDigits ? encryptPII(einDigits) : undefined,
+              einLast4: einDigits ? lastDigits(einDigits) : undefined,
+            }
+          : { email, phone: input.phone }),
       },
     });
+
+    if (isBusiness && input.business?.address) {
+      const address = input.business.address;
+      const hasAddress = Object.values(address).some(Boolean);
+      if (hasAddress) {
+        await tx.address.create({
+          data: {
+            clientId: link.clientId,
+            type: 'BUSINESS',
+            line1: address.line1 || '',
+            line2: address.line2,
+            city: address.city || '',
+            state: address.state,
+            postalCode: address.postalCode,
+            country: address.country || 'US',
+            isPrimary: true,
+          },
+        });
+      }
+    }
 
     await tx.onboardingLink.update({
       where: { id: link.id },
@@ -211,13 +297,8 @@ export const completeOnboarding = async (
     return { user: createdUser };
   });
 
-  const client = await prisma.client.findUniqueOrThrow({
-    where: { id: link.clientId },
-    select: { firmId: true },
-  });
-
   const tokens = await createSession(user, {
-    firmId: client.firmId,
+    firmId: link.client.firmId,
     ipAddress: meta.ipAddress,
     userAgent: meta.userAgent,
   });

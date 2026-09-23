@@ -210,7 +210,15 @@ const ClientLoginForm = () => {
               noValidate
             >
               <div className="grid gap-2">
-                <Label htmlFor="password">Password</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password">Password</Label>
+                  <TextLink
+                    href="/forgot-password"
+                    className="text-xs text-primary"
+                  >
+                    Forgot password?
+                  </TextLink>
+                </div>
                 <PasswordInput
                   id="password"
                   autoComplete="current-password"

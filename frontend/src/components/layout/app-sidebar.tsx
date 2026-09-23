@@ -52,6 +52,9 @@ interface AppSidebarProps {
   navGroups: AppNavGroup[];
   profileHref: string;
   mobileTitle?: string;
+  /** Firm/client name shown under the app brand, so it's always clear whose
+   * workspace is currently open. */
+  contextLabel?: string;
 }
 
 export function AppSidebar({
@@ -59,6 +62,7 @@ export function AppSidebar({
   navGroups,
   profileHref,
   mobileTitle,
+  contextLabel,
 }: AppSidebarProps) {
   const t = useTranslations();
   const { signOut } = useAuth();
@@ -93,6 +97,11 @@ export function AppSidebar({
     <div className="flex h-full min-w-0 flex-col bg-transparent text-start">
       <SidebarHeader>
         <AppBrand href={brandHref} onClick={onItemClick} />
+        {contextLabel ? (
+          <p className="truncate px-2 pt-1 text-xs font-medium text-muted-foreground group-data-[state=collapsed]:hidden">
+            {contextLabel}
+          </p>
+        ) : null}
       </SidebarHeader>
 
       <SidebarContent>

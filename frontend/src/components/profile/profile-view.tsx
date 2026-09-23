@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import InputError from '@/components/ui/input-error';
 import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ROLE_LABELS } from '@/features/auth/types';
 import {
@@ -30,7 +31,7 @@ import {
 } from '@/features/profile/hooks/use-profile';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect, useRef } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 
 const initialsFor = (name: string | null, email: string | null): string => {
   if (name) {
@@ -206,7 +207,17 @@ function PersonalInfoCard({
             </div>
             <div className="grid gap-2">
               <Label htmlFor="phone">Phone</Label>
-              <Input id="phone" type="tel" {...form.register('phone')} />
+              <Controller
+                control={form.control}
+                name="phone"
+                render={({ field }) => (
+                  <PhoneInput
+                    id="phone"
+                    value={field.value}
+                    onChange={field.onChange}
+                  />
+                )}
+              />
               <InputError message={form.formState.errors.phone?.message} />
             </div>
           </div>

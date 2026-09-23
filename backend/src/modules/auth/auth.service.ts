@@ -1,10 +1,9 @@
 import { AccountRole } from '@prisma/client';
-import { add } from 'date-fns';
 import httpStatus from 'http-status';
 
 import prisma from '@/client';
 import config from '@/config/config';
-import { sendOtpEmail, sendPasswordResetEmail } from '@/shared/services/email.service';
+import { sendOtpEmail, sendPasswordResetOtpEmail } from '@/shared/services/email.service';
 import { createOtpChallenge, verifyOtpChallenge } from '@/shared/services/otp.service';
 import {
   createSession,
@@ -15,12 +14,7 @@ import {
   verifyPurposeToken,
 } from '@/shared/services/token.service';
 import ApiError from '@/shared/utils/api-error';
-import {
-  compareSecret,
-  generateSecureToken,
-  hashSecret,
-  hashToken,
-} from '@/shared/utils/encryption';
+import { compareSecret, hashSecret } from '@/shared/utils/encryption';
 import { AuthTokensResponse } from '@/types/response';
 
 const STAFF_ROLES: AccountRole[] = [
@@ -29,9 +23,12 @@ const STAFF_ROLES: AccountRole[] = [
   AccountRole.FIRM_TEAM,
 ];
 
+// Team stays admin-reset-only by design (oversight rule) — Platform Owner,
+// Firm Admin, and Client all get self-service OTP-based recovery.
 const SELF_PASSWORD_RESET_ROLES: AccountRole[] = [
   AccountRole.PLATFORM_OWNER,
   AccountRole.FIRM_ADMIN,
+  AccountRole.FIRM_CLIENT,
 ];
 
 interface RequestMeta {
@@ -207,57 +204,65 @@ export const clientVerifyOtp = async (loginToken: string, otp: string, meta: Req
 };
 
 // ---------------------------------------------------------------------------
-// Forgot / reset password — Platform Owner & Firm Admin self-service only
-// (Team cannot self-reset by design; Client uses OTP login, not a password reset)
+// Forgot / reset password — OTP-based, for Platform Owner / Firm Admin / Client
+// (Team stays admin-reset-only by design — see SELF_PASSWORD_RESET_ROLES)
 // ---------------------------------------------------------------------------
 
-export const forgotPassword = async (email: string): Promise<void> => {
+const PASSWORD_RESET_PURPOSE = 'password_reset';
+
+export const forgotPassword = async (
+  email: string,
+  meta: RequestMeta
+): Promise<{ resetToken: string; expiresInMinutes: number }> => {
   const user = await prisma.user.findUnique({
     where: { email: email.toLowerCase() },
     select: { id: true, email: true, accountRole: true, status: true },
   });
 
-  if (!user || !SELF_PASSWORD_RESET_ROLES.includes(user.accountRole) || user.status !== 'ACTIVE') {
-    // Do not reveal whether the account exists.
-    return;
+  const eligible =
+    !!user && SELF_PASSWORD_RESET_ROLES.includes(user.accountRole) && user.status === 'ACTIVE';
+
+  // Always return a same-shaped response whether or not the account exists —
+  // never reveal account existence through this endpoint. For an ineligible
+  // account, the token below is signed against a challenge that can never
+  // exist, so step 2 fails the same way a wrong OTP would.
+  let challengeId = 'invalid';
+  if (eligible) {
+    const challenge = await createOtpChallenge({
+      userId: user!.id,
+      destination: user!.email as string,
+      channel: 'EMAIL',
+      purpose: 'PASSWORD_RESET',
+      ipAddress: meta.ipAddress,
+    });
+    challengeId = challenge.challengeId;
+    await sendPasswordResetOtpEmail(
+      user!.email as string,
+      challenge.code,
+      challenge.expiresInMinutes
+    );
   }
 
-  const rawToken = generateSecureToken(32);
-  await prisma.verificationToken.create({
-    data: {
-      userId: user.id,
-      type: 'PASSWORD_RESET',
-      tokenHash: hashToken(rawToken),
-      expiresAt: add(new Date(), { minutes: config.jwt.resetPasswordExpirationMinutes }),
-    },
-  });
+  const resetToken = signPurposeToken(
+    { sub: user?.id ?? 'unknown', purpose: PASSWORD_RESET_PURPOSE, challengeId },
+    config.jwt.clientLoginExpirationMinutes
+  );
 
-  const resetUrl = `${config.clientPortalUrl}/reset-password?token=${rawToken}`;
-  await sendPasswordResetEmail(user.email as string, resetUrl);
+  return { resetToken, expiresInMinutes: config.jwt.clientLoginExpirationMinutes };
 };
 
-export const resetPassword = async (token: string, newPassword: string): Promise<void> => {
-  const tokenHash = hashToken(token);
-  const verification = await prisma.verificationToken.findUnique({ where: { tokenHash } });
+export const resetPassword = async (
+  resetToken: string,
+  otp: string,
+  newPassword: string
+): Promise<void> => {
+  const decoded = verifyPurposeToken(resetToken, PASSWORD_RESET_PURPOSE);
+  const challengeId = decoded.challengeId as string;
 
-  if (
-    !verification ||
-    verification.consumedAt ||
-    verification.type !== 'PASSWORD_RESET' ||
-    verification.expiresAt < new Date()
-  ) {
-    throw new ApiError(httpStatus.BAD_REQUEST, 'This reset link is invalid or has expired');
-  }
+  await verifyOtpChallenge(challengeId, otp);
 
+  const userId = decoded.sub;
   const passwordHash = await hashSecret(newPassword);
-
-  await prisma.$transaction([
-    prisma.user.update({ where: { id: verification.userId }, data: { passwordHash } }),
-    prisma.verificationToken.update({
-      where: { id: verification.id },
-      data: { consumedAt: new Date() },
-    }),
-  ]);
-
-  await revokeAllSessionsForUser(verification.userId);
+  await prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+  await revokeAllSessionsForUser(userId);
 };

@@ -85,10 +85,10 @@ export default function FirmsPage() {
                     </Link>
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {firm.email || '—'}
+                    {firm.email || 'N/A'}
                   </TableCell>
-                  <TableCell>{firm._count?.members ?? '—'}</TableCell>
-                  <TableCell>{firm._count?.clients ?? '—'}</TableCell>
+                  <TableCell>{firm._count?.members ?? 'N/A'}</TableCell>
+                  <TableCell>{firm._count?.clients ?? 'N/A'}</TableCell>
                   <TableCell>
                     <FirmStatusBadge status={firm.status} />
                   </TableCell>

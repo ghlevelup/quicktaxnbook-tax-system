@@ -47,6 +47,20 @@ export const getClient = catchAsync(async (req) => {
   };
 });
 
+export const updateClientStatus = catchAsync(async (req) => {
+  const {
+    params: { clientId },
+    body: { status },
+  } = await zParse(clientSchema.updateClientStatusSchema, req);
+  const actor = req.user as AuthActor;
+  const client = await clientService.updateClientStatus(actor.firmId as string, clientId, status);
+  return {
+    statusCode: httpStatus.OK,
+    message: status === 'ACTIVE' ? 'Client activated' : 'Client deactivated',
+    data: client,
+  };
+});
+
 export const createOnboardingLink = catchAsync(async (req) => {
   const {
     params: { clientId },
@@ -86,7 +100,7 @@ export const completeOnboarding = catchAsync(async (req) => {
   const result = await clientService.completeOnboarding(token, body, requestMeta(req));
   return {
     statusCode: httpStatus.OK,
-    message: 'Onboarding complete — you are now logged in',
+    message: 'Onboarding complete. You are now logged in',
     data: result,
   };
 });
