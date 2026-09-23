@@ -3,7 +3,7 @@ import httpStatus from 'http-status';
 
 import prisma from '@/client';
 import { createSession, revokeAllSessionsForUser } from '@/shared/services/token.service';
-import { localFileUrl, saveLocalFile } from '@/shared/services/storage.service';
+import { fileUrl, saveFile } from '@/shared/services/storage.service';
 import ApiError from '@/shared/utils/api-error';
 import { compareSecret, hashSecret } from '@/shared/utils/encryption';
 import { AuthActor, AuthTokensResponse } from '@/types/response';
@@ -51,7 +51,7 @@ export const getMyProfile = async (actor: AuthActor) => {
     timezone: user.timezone,
     emailVerifiedAt: user.emailVerifiedAt,
     lastLoginAt: user.lastLoginAt,
-    avatarUrl: user.avatar ? localFileUrl(user.avatar) : null,
+    avatarUrl: user.avatar ? fileUrl(user.avatar) : null,
     canChangePassword: SELF_PASSWORD_CHANGE_ROLES.includes(user.accountRole),
     membership: 'memberships' in user ? ((user.memberships as any)?.[0] ?? null) : null,
     clients: 'clientAccess' in user ? ((user.clientAccess as any) ?? null) : null,
@@ -114,7 +114,7 @@ export const changeMyPassword = async (
 };
 
 export const uploadMyAvatar = async (actor: AuthActor, file: Express.Multer.File) => {
-  const storedFile = await saveLocalFile({
+  const storedFile = await saveFile({
     firmId: actor.firmId,
     uploadedById: actor.userId,
     subDir: 'avatars',
@@ -128,5 +128,5 @@ export const uploadMyAvatar = async (actor: AuthActor, file: Express.Multer.File
     data: { avatarFileId: storedFile.id },
   });
 
-  return { avatarUrl: localFileUrl(storedFile) };
+  return { avatarUrl: fileUrl(storedFile) };
 };

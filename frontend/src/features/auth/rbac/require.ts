@@ -29,15 +29,16 @@ export async function requireFirmMember(
   return user;
 }
 
-/** Requires the user to be FIRM_CLIENT AND have access to `clientId` in the URL. */
+/** Requires the user to be FIRM_CLIENT AND have access to `clientId` in the
+ * URL — and that entity must still be active (a firm can deactivate one
+ * entity without the whole login being blocked, so this can't just be a
+ * broader account-status check). */
 export async function requireClientAccess(
   clientId: string,
 ): Promise<CurrentUser> {
   const user = await requireRole(['FIRM_CLIENT']);
-  const hasAccess = user.clients?.some(
-    (access) => access.client.id === clientId,
-  );
-  if (!hasAccess) {
+  const access = user.clients?.find((entry) => entry.client.id === clientId);
+  if (!access || access.client.status !== 'ACTIVE') {
     redirect(roleHomePath(user));
   }
   return user;

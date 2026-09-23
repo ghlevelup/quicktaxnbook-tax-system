@@ -11,10 +11,12 @@ export function roleHomePath(user: CurrentUser): string {
       return user.membership
         ? `/firm/${user.membership.firm.slug}/dashboard`
         : '/login';
-    case 'FIRM_CLIENT':
-      return user.clients?.[0]
-        ? `/client/${user.clients[0].client.id}/dashboard`
-        : '/client-login';
+    case 'FIRM_CLIENT': {
+      const entity =
+        user.clients?.find((access) => access.client.status === 'ACTIVE') ??
+        user.clients?.[0];
+      return entity ? `/client/${entity.client.id}/dashboard` : '/client-login';
+    }
     default:
       return '/login';
   }

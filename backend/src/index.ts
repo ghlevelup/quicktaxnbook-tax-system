@@ -11,9 +11,6 @@ prisma
   .$connect()
   .then(() => {
     logger.info('🔌 Connected to SQL Database');
-    if (config.redisUrl) {
-      logger.info('⌛️ Connected to Redis');
-    }
     server = app.listen(config.port, () => {
       logger.info(`🚀 Running in ${config.env} mode on port ${config.port}`);
     });
