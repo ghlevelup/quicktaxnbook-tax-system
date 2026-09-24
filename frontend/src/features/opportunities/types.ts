@@ -59,6 +59,7 @@ export interface OpportunityPipelineRef {
   id: string;
   name: string;
   ghlPipelineId: string;
+  isDocumentPipeline: boolean;
 }
 
 export interface Opportunity {

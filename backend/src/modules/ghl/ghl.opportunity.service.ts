@@ -22,7 +22,9 @@ const OPPORTUNITY_SELECT = {
   ghlUpdatedAt: true,
   lastSyncedAt: true,
   stage: { select: { id: true, name: true, position: true, clientStage: true } },
-  pipeline: { select: { id: true, name: true, ghlPipelineId: true } },
+  pipeline: {
+    select: { id: true, name: true, ghlPipelineId: true, isDocumentPipeline: true },
+  },
 } as const;
 
 type OpportunityRow = Prisma.GhlOpportunityGetPayload<{ select: typeof OPPORTUNITY_SELECT }>;

@@ -2,6 +2,7 @@
 
 import { Icon } from '@/components/icons/app-icons';
 import { DocumentUploadZone } from '@/components/client-portal/document-upload-zone';
+import { EngagementProgress } from '@/components/client-portal/engagement-progress';
 import { EmptyState } from '@/components/shared/empty-state';
 import { PageHeader, PageLayout } from '@/components/shared/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -116,6 +117,10 @@ export function MyDocuments({ clientId }: { clientId: string }) {
             : 'Upload documents for your firm and track their progress.'
         }
       />
+
+      {/* Overall progress first — this is what answers "what's going on with
+          this work", before the client sees any per-file detail. */}
+      <EngagementProgress clientId={clientId} />
 
       {/* Unprompted upload — the client never has to wait for a request. */}
       <Card flat className="mb-6 p-4">

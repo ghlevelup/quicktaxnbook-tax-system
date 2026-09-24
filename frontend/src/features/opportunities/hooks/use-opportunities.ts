@@ -13,7 +13,7 @@ import type {
 const opportunitiesKey = (pipelineId?: string) =>
   ['opportunities', pipelineId ?? 'all'] as const;
 const pipelinesKey = () => ['opportunities', 'pipelines'] as const;
-const myDocsKey = () => ['opportunities', 'mine'] as const;
+const myDocsKey = (clientId?: string) => ['opportunities', 'mine', clientId ?? 'default'] as const;
 
 /** Staff: every opportunity in the firm, synced from GoHighLevel on load. */
 export function useOpportunities(pipelineId?: string) {
@@ -116,14 +116,21 @@ export function useMoveStage() {
   });
 }
 
-/** Client portal: the signed-in client's own document statuses. */
-export function useMyDocuments() {
+/**
+ * Client portal: the signed-in client's own opportunities — this is what
+ * drives the engagement progress bar ("where is my return at").
+ *
+ * `clientId` matters once a portal user has more than one entity (see
+ * EntitySwitcher) — without it the backend defaults to their first access
+ * grant, which would show the wrong engagement after switching entities.
+ */
+export function useMyDocuments(clientId?: string) {
   return useQuery({
-    queryKey: myDocsKey(),
+    queryKey: myDocsKey(clientId),
     queryFn: () =>
-      apiFetch<OpportunityListResult>('/opportunities/mine/list').then(
-        (r) => r.data,
-      ),
+      apiFetch<OpportunityListResult>(
+        `/opportunities/mine/list${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ''}`,
+      ).then((r) => r.data),
   });
 }
 
