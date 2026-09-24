@@ -265,6 +265,7 @@ enum UploadChannel {
 }
 
 enum StorageProvider {
+  GHL_MEDIA
   S3
   R2
   GCS
@@ -809,6 +810,8 @@ model Firm {
   importJobs            ImportJob[]
   auditLogs             AuditLog[]
   integrations          Integration[]
+  ghlPipelines          GhlPipeline[]
+  ghlOpportunities      GhlOpportunity[]
   webhookEndpoints      WebhookEndpoint[]
   apiKeys               ApiKey[]
   usageRecords          UsageRecord[]
@@ -1250,6 +1253,8 @@ model Client {
   tags            ClientTag[]
   relationsFrom   ClientRelationship[] @relation("RelFrom")
   relationsTo     ClientRelationship[] @relation("RelTo")
+  ghlOpportunities GhlOpportunity[]
+  documentRequests DocumentRequest[]
 
   @@unique([firmId, clientNumber])
   @@index([firmId, status])
@@ -1614,6 +1619,10 @@ model StoredFile {
   virusScanStatus VirusScanStatus @default(PENDING)
   virusScannedAt  DateTime?
   pageCount       Int?
+  /// Provider-side id for the stored object. For GHL_MEDIA this is the
+  /// GoHighLevel media file id, which is what the Media Library API needs to
+  /// delete or re-read the file — `key` holds its public URL.
+  externalFileId  String?
   uploadedById    String?
   uploadIp        String?
   createdAt       DateTime        @default(now())
@@ -1662,7 +1671,10 @@ model DocumentCategory {
 model DocumentRequest {
   id               String                @id @default(cuid())
   firmId           String
-  caseId           String
+  /// Optional: a request can exist before any tax case does. The client is the
+  /// required anchor, since staff request documents from a CLIENT.
+  caseId           String?
+  clientId         String
   categoryId       String?
   templateItemId   String?
   title            String
@@ -1685,7 +1697,8 @@ model DocumentRequest {
   deletedAt        DateTime?
 
   firm         Firm                         @relation(fields: [firmId], references: [id], onDelete: Cascade)
-  case         Case                         @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  case         Case?                        @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  client       Client                       @relation(fields: [clientId], references: [id], onDelete: Cascade)
   category     DocumentCategory?            @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   templateItem DocumentRequestTemplateItem? @relation(fields: [templateItemId], references: [id], onDelete: SetNull)
   createdBy    User?                        @relation("DocRequestCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
@@ -1694,6 +1707,7 @@ model DocumentRequest {
   reminders    Reminder[]
 
   @@index([caseId, status])
+  @@index([clientId, status])
   @@index([firmId, status, dueDate])
 }
 
@@ -2941,6 +2955,112 @@ model GhlAgencyConnection {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// The vocabulary the CLIENT portal shows, independent of how any one firm
+/// named its GoHighLevel stages. Every mirrored stage maps onto exactly one of
+/// these (see ghl.stage-map.ts), so the client sees the same five steps whether
+/// their return runs through the Individual, S-Corp or Payroll pipeline.
+enum ClientDocStage {
+  REQUESTED
+  RECEIVED
+  IN_PROGRESS
+  READY_FOR_REVIEW
+  AWAITING_SIGNATURE
+  AWAITING_PAYMENT
+  COMPLETED
+}
+
+// ---------------------------------------------------------------------------
+// GoHighLevel opportunity mirror
+// ---------------------------------------------------------------------------
+// These three tables are a LOCAL CACHE of what lives in a firm's GoHighLevel
+// sub-account — never the source of truth. GoHighLevel owns this data; we
+// reconcile against it (see modules/ghl/ghl.opportunity-sync.ts) and anything
+// here that no longer exists upstream is deleted on the next sync.
+//
+// They are deliberately separate from the internal `Pipeline`/`PipelineStage`
+// models above: those drive tax-case workflow inside this app and are firm-
+// editable, whereas these only ever reflect GoHighLevel.
+
+/// Mirror of one GoHighLevel pipeline in a firm's sub-account.
+model GhlPipeline {
+  id            String   @id @default(cuid())
+  firmId        String
+  /// Pipeline id in GoHighLevel — the reconcile key.
+  ghlPipelineId String
+  name          String
+  /// Set on the pipeline this firm uses for document tracking.
+  isDocumentPipeline Boolean @default(false)
+  lastSyncedAt  DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  firm          Firm                @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  stages        GhlPipelineStage[]
+  opportunities GhlOpportunity[]
+
+  @@unique([firmId, ghlPipelineId])
+  @@index([firmId, isDocumentPipeline])
+}
+
+/// Mirror of a stage within a GoHighLevel pipeline.
+model GhlPipelineStage {
+  id         String   @id @default(cuid())
+  pipelineId String
+  /// Stage id in GoHighLevel — the reconcile key, and what we send on update.
+  ghlStageId String
+  name       String
+  position   Int      @default(0)
+  /// Client-facing bucket this stage rolls up to. Firms name their stages
+  /// differently per pipeline ("Return in Progress" vs "941 / W-2 / 1099 In
+  /// Progress"), but the client portal must show one consistent vocabulary —
+  /// so each mirrored stage is classified once, here, on sync.
+  clientStage ClientDocStage @default(IN_PROGRESS)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  pipeline      GhlPipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  opportunities GhlOpportunity[]
+
+  @@unique([pipelineId, ghlStageId])
+  @@index([pipelineId, position])
+}
+
+/// Mirror of a GoHighLevel opportunity. One per tracked document.
+model GhlOpportunity {
+  id               String  @id @default(cuid())
+  firmId           String
+  /// Opportunity id in GoHighLevel — the reconcile key.
+  ghlOpportunityId String
+  pipelineId       String
+  stageId          String?
+  /// GoHighLevel contact this opportunity hangs off.
+  ghlContactId     String?
+  /// Resolved local client, when the contact maps to one. Null while unmatched.
+  clientId         String?
+  name             String
+  /// GoHighLevel's own status: open / won / lost / abandoned.
+  status           String  @default("open")
+  monetaryValue    Decimal? @db.Decimal(12, 2)
+  /// Raw custom fields from GoHighLevel (file_url, file_id, uploaded_by, ...).
+  customFields     Json?
+  /// Timestamps as reported by GoHighLevel, used to detect upstream changes.
+  ghlCreatedAt     DateTime?
+  ghlUpdatedAt     DateTime?
+  lastSyncedAt     DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  firm     Firm              @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  pipeline GhlPipeline       @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  stage    GhlPipelineStage? @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  client   Client?           @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@unique([firmId, ghlOpportunityId])
+  @@index([firmId, pipelineId])
+  @@index([clientId])
+  @@index([ghlContactId])
 }
 
 /// Inbound webhooks (Stripe, Twilio, e-sign) for idempotency + replay

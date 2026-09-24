@@ -27,6 +27,9 @@ import {
   LinkBreak,
   MagnifyingGlass,
   MapPin,
+  ArrowsClockwise,
+  FileArrowUp,
+  FolderOpen,
   Moon,
   PencilSimple,
   Phone,
@@ -93,6 +96,9 @@ export const Icons = {
   moreVertical: DotsThreeVertical,
   eye: Eye,
   eyeOff: EyeSlash,
+  refresh: ArrowsClockwise,
+  folder: FolderOpen,
+  fileUpload: FileArrowUp,
 } as const;
 
 export type IconName = keyof typeof Icons;

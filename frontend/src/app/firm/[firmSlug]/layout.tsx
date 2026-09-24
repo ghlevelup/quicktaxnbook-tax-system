@@ -17,6 +17,7 @@ export default async function FirmLayout({
   const tabs: TabNavItem[] = [
     { id: 'dashboard', label: 'Dashboard', href: `/firm/${firmSlug}/dashboard` },
     { id: 'clients', label: 'Clients', href: `/firm/${firmSlug}/clients` },
+    { id: 'documents', label: 'Documents', href: `/firm/${firmSlug}/documents` },
     ...(user.accountRole === 'FIRM_ADMIN'
       ? [{ id: 'team', label: 'Team', href: `/firm/${firmSlug}/team` }]
       : []),

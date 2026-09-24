@@ -33,6 +33,12 @@ export default async function ClientPortalLayout({
           href: `/client/${clientId}/dashboard`,
           icon: 'dashboard',
         },
+        {
+          id: 'documents',
+          label: 'My documents',
+          href: `/client/${clientId}/documents`,
+          icon: 'folder',
+        },
       ],
     },
   ];
