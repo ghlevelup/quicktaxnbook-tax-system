@@ -61,7 +61,10 @@ async function request<T>(
     if (error instanceof DOMException && error.name === 'TimeoutError') {
       throw new ApiError('The request timed out. Please try again.', 504);
     }
-    throw new ApiError('Could not reach the server. Please check your connection.', 0);
+    throw new ApiError(
+      'Could not reach the server. Please check your connection.',
+      0,
+    );
   }
 
   const json = (await res.json().catch(() => null)) as ApiEnvelope<T> | null;
@@ -103,4 +106,28 @@ export function onboardingFetch<T = unknown>(
   options: ApiFetchOptions = {},
 ) {
   return request<T>('/api/onboarding', path, { method: 'GET', ...options });
+}
+
+/**
+ * The agency admin's `/platform` entry (agency token + company id). Unauthenticated
+ * on entry; its route handler owns the session cookies it sets on success.
+ */
+export function platformEntryFetch<T = unknown>(
+  path: string,
+  options: ApiFetchOptions = {},
+) {
+  return request<T>('/api/platform', path, { method: 'POST', ...options });
+}
+
+/**
+ * The firm GoHighLevel connect flow, opened from a GoHighLevel custom menu link
+ * (`/firms/{locationId}`). Unauthenticated on entry — the sub-account Private
+ * Integration Token is the credential, and its route handler owns the session
+ * cookies it sets on success.
+ */
+export function firmFetch<T = unknown>(
+  path: string,
+  options: ApiFetchOptions = {},
+) {
+  return request<T>('/api/firms', path, { method: 'GET', ...options });
 }

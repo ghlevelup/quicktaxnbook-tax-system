@@ -4,7 +4,8 @@ import httpStatus from 'http-status';
 import prisma from '@/client';
 import config from '@/config/config';
 import logger from '@/config/logger';
-import { sendOtpEmail, sendPasswordResetOtpEmail } from '@/shared/services/email.service';
+import { loadClientWebhookContext, postCrmWebhook } from '@/shared/services/crm-webhook.service';
+import { sendPasswordResetOtpEmail } from '@/shared/services/email.service';
 import { createOtpChallenge, verifyOtpChallenge } from '@/shared/services/otp.service';
 import {
   createSession,
@@ -128,6 +129,33 @@ export const clientLoginStart = async (email: string): Promise<void> => {
   }
 };
 
+/** Posts the login code plus the client's firm/contact details to the CRM workflow. */
+const sendClientLoginOtpWebhook = async (
+  user: { id: string; email: string | null; firstName: string | null; lastName: string | null; phone: string | null },
+  code: string,
+  expiresInMinutes: number
+): Promise<void> => {
+  const access = await prisma.clientAccess.findFirst({
+    where: { userId: user.id, revokedAt: null },
+    orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+    select: { clientId: true },
+  });
+  const context = access ? await loadClientWebhookContext(access.clientId) : null;
+
+  await postCrmWebhook('client.login_otp', {
+    ...(context ?? {}),
+    user: {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      phone: user.phone,
+    },
+    code,
+    expiresInMinutes,
+  });
+};
+
 export const clientLoginPassword = async (
   email: string,
   password: string,
@@ -157,11 +185,10 @@ export const clientLoginPassword = async (
     ipAddress: meta.ipAddress,
   });
 
-  // Fire-and-forget: the OTP challenge is already persisted, so the login
-  // flow must not stall on SMTP latency/outages. A failed send is logged and
-  // surfaces to the user as an expired/never-arriving code, not a hung request.
-  sendOtpEmail(user.email as string, code, expiresInMinutes).catch((error) => {
-    logger.error('Failed to send login OTP email: %s', (error as Error).message);
+  // The code email is sent by the GoHighLevel workflow behind this webhook.
+  // Fire-and-forget: the challenge is already saved, so login never waits on it.
+  void sendClientLoginOtpWebhook(user, code, expiresInMinutes).catch((error) => {
+    logger.error('Client login OTP webhook failed: %s', (error as Error).message);
   });
 
   const loginToken = signPurposeToken(

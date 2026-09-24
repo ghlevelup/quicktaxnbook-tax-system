@@ -82,3 +82,16 @@ export const resetTeamMemberPassword = catchAsync(async (req) => {
     data: result,
   };
 });
+
+export const syncTeamFromGhl = catchAsync(async (req) => {
+  const actor = req.user as AuthActor;
+  const result = await teamService.syncTeamFromGhl(actor.firmId as string, actor.userId);
+  return {
+    statusCode: httpStatus.OK,
+    message:
+      result.created + result.updated > 0
+        ? 'Team refreshed from GoHighLevel'
+        : 'Team is already up to date',
+    data: result,
+  };
+});

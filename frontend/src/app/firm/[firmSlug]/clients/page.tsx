@@ -4,6 +4,7 @@ import { ClientStatusAction } from '@/components/firm/client-status-action';
 import { ClientStatusBadge } from '@/components/firm/client-status-badge';
 import { CreateClientDialog } from '@/components/firm/create-client-dialog';
 import { OnboardingLinkAction } from '@/components/firm/onboarding-link-action';
+import { SyncClientsButton } from '@/components/firm/sync-clients-button';
 import { EmptyState } from '@/components/shared/empty-state';
 import { PageHeader, PageLayout } from '@/components/shared/page-header';
 import { Card } from '@/components/ui/card';
@@ -16,10 +17,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useClients } from '@/features/clients/hooks/use-clients';
+import {
+  useAutoSyncClientsFromGhl,
+  useClients,
+} from '@/features/clients/hooks/use-clients';
 import { CLIENT_TYPE_LABELS } from '@/features/clients/types';
 
 export default function ClientsPage() {
+  useAutoSyncClientsFromGhl();
   const { data, isPending } = useClients();
   const clients = data?.results ?? [];
 
@@ -28,7 +33,12 @@ export default function ClientsPage() {
       <PageHeader
         title="Clients"
         subtitle="Taxpayers your firm works with."
-        actions={<CreateClientDialog />}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <SyncClientsButton />
+            <CreateClientDialog />
+          </div>
+        }
       />
 
       <Card flat className="overflow-hidden py-0">
@@ -41,7 +51,7 @@ export default function ClientsPage() {
           <EmptyState
             icon="briefcase"
             title="No clients yet"
-            description="Add your first client, then send them an onboarding link."
+            description='Add your first client, or tag contacts "new client" in your GoHighLevel sub-account and press Refresh.'
           />
         ) : (
           <Table>

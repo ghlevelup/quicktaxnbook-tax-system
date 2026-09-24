@@ -33,3 +33,11 @@ export const STAFF_TYPE_LABELS: Record<StaffType, string> = {
   MANAGER: 'Manager',
   OWNER: 'Owner',
 };
+
+/** Result of mirroring the GoHighLevel sub-account's users into the team. */
+export interface GhlTeamSyncResult {
+  fetched: number;
+  created: number;
+  updated: number;
+  skipped: number;
+}

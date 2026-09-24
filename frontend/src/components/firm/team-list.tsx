@@ -1,6 +1,7 @@
 'use client';
 
 import { Badge } from '@/components/ui/badge';
+import { SyncTeamButton } from '@/components/firm/sync-team-button';
 import { CreateTeamMemberDialog } from '@/components/firm/create-team-member-dialog';
 import { TeamMemberActions } from '@/components/firm/team-member-actions';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -16,10 +17,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useTeamMembers } from '@/features/team/hooks/use-team';
+import {
+  useAutoSyncTeamFromGhl,
+  useTeamMembers,
+} from '@/features/team/hooks/use-team';
 import { STAFF_TYPE_LABELS } from '@/features/team/types';
 
 export function TeamList() {
+  useAutoSyncTeamFromGhl();
   const { data, isPending } = useTeamMembers({ enabled: true });
   const members = data?.results ?? [];
 
@@ -28,7 +33,12 @@ export function TeamList() {
       <PageHeader
         title="Team"
         subtitle="Preparers, reviewers, and support staff at your firm."
-        actions={<CreateTeamMemberDialog />}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <SyncTeamButton />
+            <CreateTeamMemberDialog />
+          </div>
+        }
       />
 
       <Card flat className="overflow-hidden py-0">

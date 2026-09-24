@@ -61,6 +61,25 @@ export const updateClientStatus = catchAsync(async (req) => {
   };
 });
 
+/**
+ * Mirrors the contacts tagged as clients in the firm's own GoHighLevel
+ * sub-account into the firm's client list. Read-only against GoHighLevel.
+ */
+export const syncClientsFromGhl = catchAsync(async (req) => {
+  const { body } = await zParse(clientSchema.syncClientsFromGhlSchema, req);
+  const actor = req.user as AuthActor;
+  const result = await clientService.syncClientsFromGhl(actor.firmId as string, body.tag);
+
+  const changed = result.created + result.updated;
+  return {
+    statusCode: httpStatus.OK,
+    message: changed
+      ? `Synced ${changed} GoHighLevel client${changed === 1 ? '' : 's'}`
+      : 'No new GoHighLevel clients found',
+    data: result,
+  };
+});
+
 export const createOnboardingLink = catchAsync(async (req) => {
   const {
     params: { clientId },

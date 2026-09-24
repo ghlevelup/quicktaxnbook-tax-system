@@ -30,6 +30,16 @@ export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {
   NONPROFIT: 'Nonprofit',
 };
 
+/** Result of mirroring GoHighLevel contacts tagged as clients. */
+export interface GhlClientSyncResult {
+  tag: string;
+  fetched: number;
+  created: number;
+  updated: number;
+  total: number;
+  truncated: boolean;
+}
+
 export const CLIENT_STATUS_LABELS: Record<ClientStatus, string> = {
   PROSPECT: 'Prospect',
   ONBOARDING: 'Onboarding',

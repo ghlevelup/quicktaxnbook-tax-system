@@ -1,12 +1,7 @@
 import { z } from 'zod';
 
-const staffTypeEnum = z.enum([
-  'PREPARER',
-  'REVIEWER',
-  'SUPPORT',
-  'MANAGER',
-  'OWNER',
-]);
+// Owner and Manager can't be picked when adding a member.
+const staffTypeEnum = z.enum(['PREPARER', 'REVIEWER', 'SUPPORT']);
 
 export const createTeamMemberSchema = z.object({
   firstName: z.string().min(1, 'First name is required'),

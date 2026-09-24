@@ -2,6 +2,7 @@
 
 import { Icon } from '@/components/icons/app-icons';
 import { FirmStatusBadge } from '@/components/platform/firm-status-badge';
+import { GhlAgencyCard } from '@/components/platform/ghl-agency-card';
 import { EmptyState } from '@/components/shared/empty-state';
 import { PageHeader, PageLayout } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
@@ -35,6 +36,8 @@ export default function FirmsPage() {
           </Button>
         }
       />
+
+      <GhlAgencyCard />
 
       <Card flat className="overflow-hidden py-0">
         {isPending ? (

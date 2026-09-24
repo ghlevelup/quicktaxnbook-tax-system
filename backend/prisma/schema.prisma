@@ -643,6 +643,7 @@ enum IntegrationProvider {
   VOICE_AI_PROVIDER
   OCR_PROVIDER
   TAX_SOFTWARE
+  GOHIGHLEVEL
   OTHER
 }
 
@@ -731,6 +732,15 @@ model Firm {
   locale       String     @default("en-US")
   currency     String     @default("USD")
   status       FirmStatus @default(TRIAL)
+
+  // GoHighLevel linkage. Deliberately set ONLY by the "Connect GHL" flow
+  // (agency private-integration token pre-check, then the firm's own
+  // sub-account private-integration token) — never created silently during
+  // firm onboarding. `ghlLocationId` is the sub-account id and is the tenant
+  // key every GHL call for this firm must be scoped to.
+  ghlLocationId  String?   @unique
+  ghlCompanyId   String?
+  ghlConnectedAt DateTime?
 
   // Responsible-party identity (the person accountable for this firm/agency).
   // EIN + SSN combined form the uniqueness key so the same business/person can
@@ -974,6 +984,7 @@ model User {
   importJobs           ImportJob[]
   notes                Note[]
   apiKeysCreated       ApiKey[]
+  ghlAgencyConnections GhlAgencyConnection[]   @relation("GhlAgencyConnectedBy")
 
   @@index([status])
   @@index([accountRole])
@@ -2895,6 +2906,9 @@ model Integration {
   configEncrypted   String?
   settings          Json?
   lastSyncAt        DateTime?
+  /// When the stored credential for this integration was last proven to work
+  /// (e.g. the last successful GHL "test connection" call).
+  lastVerifiedAt    DateTime?
   lastError         String?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
@@ -2902,6 +2916,31 @@ model Integration {
   firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
 
   @@unique([firmId, provider])
+}
+
+/// Agency-scope (company) GoHighLevel credential. Kept separate from
+/// `Integration` because that model is firm-scoped and unique per
+/// [firmId, provider] — an agency connection belongs to no single firm.
+/// `companyId` is unique, so more than one agency can be connected later
+/// without a schema change.
+model GhlAgencyConnection {
+  id            String            @id @default(cuid())
+  /// Agency (company) id in GoHighLevel, derived from the token when possible.
+  companyId     String?           @unique
+  companyName   String?
+  /// GoHighLevel "Relationship Number" the platform owner enters alongside the token.
+  relationshipNumber String?
+  /// AES-256-GCM encrypted agency private integration token (never logged, never selected into a response).
+  tokenEncrypted String
+  status        IntegrationStatus @default(CONNECTED)
+  lastVerifiedAt DateTime?
+  lastError     String?
+
+  connectedById String?
+  connectedBy   User?   @relation("GhlAgencyConnectedBy", fields: [connectedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 /// Inbound webhooks (Stripe, Twilio, e-sign) for idempotency + replay

@@ -87,7 +87,31 @@ const FIRM_SAFE_SELECT = {
   updatedAt: true,
 } as const;
 
-export const onboardFirm = async (input: OnboardFirmInput, platformOwnerId: string) => {
+/**
+ * GoHighLevel sub-account provisioning is intentionally NOT performed yet.
+ *
+ * Product decision: onboarding a firm here must NOT create anything in
+ * GoHighLevel. The sub-account is created by the agency separately and then
+ * linked to this firm through the "Connect GHL" flow (modules/ghl), which
+ * proves the sub-account exists with the agency token and stores that
+ * sub-account's own private-integration token, encrypted.
+ *
+ * This logs the data a real provisioner would need so the intent stays visible
+ * in the logs while the real call is on hold. It logs NO sensitive identifiers
+ * — never the EIN, SSN, or any credential.
+ */
+const logGhlProvisionIntent = (
+  firm: { id: string; name: string; slug: string; city?: string | null; state?: string | null },
+  ownerEmail: string
+): void => {
+  logger.info(
+    `GHL provisioning skipped (mock — no sub-account created). Would provision firm id=${firm.id} ` +
+      `slug=${firm.slug} name="${firm.name}" owner=${ownerEmail} ` +
+      `location=${firm.city ?? '-'}, ${firm.state ?? '-'}`
+  );
+};
+
+export const onboardFirm = async (input: OnboardFirmInput, platformOwnerId?: string) => {
   const einDigits = input.firm.ein ? normalizeDigits(input.firm.ein) : undefined;
   const ssnDigits = input.owner.ssn ? normalizeDigits(input.owner.ssn) : undefined;
 
@@ -195,6 +219,11 @@ export const onboardFirm = async (input: OnboardFirmInput, platformOwnerId: stri
 
     return { firm, owner };
   }, TX_OPTIONS);
+
+  // GoHighLevel sub-account provisioning is deliberately on hold — see
+  // logGhlProvisionIntent() for the reasoning, and modules/ghl/ghl.service.ts
+  // for the flow that replaces it.
+  logGhlProvisionIntent(result.firm, ownerEmail);
 
   // Fire-and-forget: the firm/owner records are already committed, so a slow
   // or unreachable SMTP server must not stall this request.

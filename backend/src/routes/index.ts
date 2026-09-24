@@ -2,6 +2,7 @@ import express from 'express';
 
 import authRoute from '../modules/auth/auth.route';
 import clientRoute from '../modules/client/client.route';
+import ghlRoute from '../modules/ghl/ghl.route';
 import onboardingRoute from '../modules/client/onboarding.route';
 import platformRoute from '../modules/platform/platform.route';
 import profileRoute from '../modules/profile/profile.route';
@@ -22,6 +23,7 @@ const routes: RouteConfig[] = [
   { path: '/auth', route: authRoute },
   { path: '/me', route: profileRoute },
   { path: '/platform', route: platformRoute },
+  { path: '/ghl', route: ghlRoute },
   { path: '/team', route: teamRoute },
   { path: '/clients', route: clientRoute },
   { path: '/onboarding', route: onboardingRoute },

@@ -6,3 +6,4 @@ export default async function FirmIndexPage() {
   const user = await requireUser('/login');
   redirect(roleHomePath(user));
 }
+ 

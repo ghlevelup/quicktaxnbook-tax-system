@@ -31,6 +31,15 @@ export const clientIdParamSchema = z.object({
   params: z.object({ clientId: z.string() }),
 });
 
+/** Optional body: the GoHighLevel tag that marks a contact as a client. */
+export const syncClientsFromGhlSchema = z.object({
+  body: z
+    .object({
+      tag: z.string().trim().min(1).max(64).optional(),
+    })
+    .default({}),
+});
+
 export const listClientsSchema = z.object({
   query: z.object({
     page: z.coerce.number().min(1).optional(),

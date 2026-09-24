@@ -9,7 +9,9 @@ export const createTeamMemberSchema = z.object({
     lastName: z.string().min(1),
     email: z.string().email(),
     phone: z.string().optional(),
-    staffType: staffTypeEnum.default('PREPARER'),
+    // Owner/Manager can't be picked when adding a member, so nobody is created
+    // with admin-level standing (in GoHighLevel they are always a plain user).
+    staffType: z.enum(['PREPARER', 'REVIEWER', 'SUPPORT']).default('PREPARER'),
     title: z.string().optional(),
   }),
 });

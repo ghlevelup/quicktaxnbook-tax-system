@@ -147,7 +147,11 @@ export function CreateTeamMemberDialog() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {Object.entries(STAFF_TYPE_LABELS).map(
+                        {Object.entries(STAFF_TYPE_LABELS)
+                          .filter(([value]) =>
+                            ['PREPARER', 'REVIEWER', 'SUPPORT'].includes(value),
+                          )
+                          .map(
                           ([value, label]) => (
                             <SelectItem key={value} value={value}>
                               {label}

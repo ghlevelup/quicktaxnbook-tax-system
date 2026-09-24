@@ -10,6 +10,8 @@ router.use(authenticate(), requireFirmAdmin);
 
 router.route('/').post(teamController.createTeamMember).get(teamController.listTeamMembers);
 
+router.post('/ghl/sync', teamController.syncTeamFromGhl);
+
 router.route('/:memberId').get(teamController.getTeamMember).patch(teamController.updateTeamMember);
 
 router.patch('/:memberId/status', teamController.updateTeamMemberStatus);

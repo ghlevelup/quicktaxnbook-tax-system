@@ -72,6 +72,30 @@ export const onboardFirmSchema = z.object({
     }),
 });
 
+export const connectAgencySchema = z.object({
+  body: z.object({
+    privateToken: z
+      .string()
+      .trim()
+      .min(20, 'Paste the full GoHighLevel agency token'),
+    relationshipNumber: z.string().trim().min(1, 'Enter the relationship number').max(64),
+  }),
+});
+
+export const enterAgencySchema = z.object({
+  body: z.object({
+    relationshipNumber: z.string().trim().min(1, 'Enter the relationship number').max(64),
+    privateToken: z.string().trim().min(20, 'Paste the full GoHighLevel agency token').optional(),
+  }),
+});
+
+export const listAgencyLocationsSchema = z.object({
+  query: z.object({
+    page: z.coerce.number().min(1).optional(),
+    limit: z.coerce.number().min(1).max(100).optional(),
+  }),
+});
+
 export const listFirmsSchema = z.object({
   query: z.object({
     page: z.coerce.number().min(1).optional(),

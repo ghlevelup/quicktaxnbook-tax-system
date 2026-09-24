@@ -5,7 +5,16 @@ import httpStatus from 'http-status';
 import prisma, { TX_OPTIONS } from '@/client';
 import config from '@/config/config';
 import logger from '@/config/logger';
-import { sendOnboardingLinkEmail } from '@/shared/services/email.service';
+import { GhlApiError } from '@/modules/ghl/ghl.client';
+import { listContactsByTag, updateContact, upsertContact } from '@/modules/ghl/ghl.service';
+import type { GhlContactFields, GhlContactList } from '@/modules/ghl/ghl.service';
+import { ghlTokenProvider } from '@/modules/ghl/ghl.tokens';
+import type { GhlContact } from '@/modules/ghl/ghl.types';
+import {
+  ghlContactIdOf,
+  loadClientWebhookContext,
+  postCrmWebhook,
+} from '@/shared/services/crm-webhook.service';
 import { createSession } from '@/shared/services/token.service';
 import ApiError from '@/shared/utils/api-error';
 import {
@@ -102,11 +111,6 @@ export const createOnboardingLink = async (
   createdById: string
 ) => {
   const client = await assertClient(firmId, clientId);
-  const firm = await prisma.firm.findUniqueOrThrow({
-    where: { id: firmId },
-    select: { name: true },
-  });
-
   const rawToken = generateSecureToken(32);
   const expiresAt = add(new Date(), { days: 7 });
 
@@ -125,13 +129,19 @@ export const createOnboardingLink = async (
 
   const onboardingUrl = `${config.clientPortalUrl}/onboard/${rawToken}`;
 
-  if (client.email) {
-    // Fire-and-forget: the onboarding link is already persisted, so a slow
-    // or unreachable SMTP server must not stall this request.
-    sendOnboardingLinkEmail(client.email, firm.name, onboardingUrl).catch((error) => {
-      logger.error('Failed to send onboarding link email: %s', (error as Error).message);
-    });
-  }
+  // The invite email is sent by the GoHighLevel workflow behind this webhook.
+  // Fire-and-forget: the link is already saved and shown to the firm.
+  void loadClientWebhookContext(client.id)
+    .then((context) =>
+      postCrmWebhook('client.onboarding_invite', {
+        ...context,
+        onboardingUrl,
+        expiresAt: expiresAt.toISOString(),
+      })
+    )
+    .catch((error) =>
+      logger.error('Onboarding invite webhook failed: %s', (error as Error).message)
+    );
 
   return { onboardingUrl, expiresAt };
 };
@@ -195,6 +205,50 @@ interface CompleteOnboardingInput {
     address?: OnboardingAddressInput;
   };
 }
+
+/**
+ * Writes client details to the firm's GoHighLevel contact: updates the linked
+ * contact, or creates one (and remembers its id) for a client added by hand.
+ * Skipped when the firm has no GoHighLevel connection. Never throws.
+ */
+export const pushClientToGhl = async (
+  clientId: string,
+  fields: GhlContactFields
+): Promise<void> => {
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: { firmId: true, metadata: true, firm: { select: { ghlLocationId: true } } },
+  });
+  if (!client?.firm.ghlLocationId) return;
+
+  let token;
+  try {
+    token = await ghlTokenProvider.forFirm(client.firmId);
+  } catch {
+    return;
+  }
+
+  try {
+    const contactId = ghlContactIdOf(client.metadata);
+    if (contactId) {
+      await updateContact(token, contactId, fields);
+    } else {
+      const createdId = await upsertContact(token, client.firm.ghlLocationId, fields);
+      if (createdId) {
+        const metadata = (client.metadata as Record<string, unknown> | null) ?? {};
+        await prisma.client.update({
+          where: { id: clientId },
+          data: { metadata: { ...metadata, ghlContactId: createdId } },
+        });
+      }
+    }
+    logger.info(`Client ${clientId} pushed to GoHighLevel contact`);
+  } catch (error) {
+    logger.warn(
+      `Could not update GoHighLevel contact for client ${clientId}: ${(error as Error).message}`
+    );
+  }
+};
 
 interface RequestMeta {
   ipAddress?: string;
@@ -309,6 +363,38 @@ export const completeOnboarding = async (
     userAgent: meta.userAgent,
   });
 
+  // Mirror what the client entered into their GoHighLevel contact, then fire
+  // the welcome-email webhook. In the background: the client is already in.
+  const ghlFields: GhlContactFields = {
+    firstName: input.firstName,
+    lastName: input.lastName,
+    name: `${input.firstName} ${input.lastName}`,
+    email,
+    phone: input.phone,
+    ...(isBusiness
+      ? {
+          companyName: input.business?.legalName,
+          website: input.business?.website,
+          address1: businessAddress?.line1,
+          city: businessAddress?.city,
+          state: businessAddress?.state,
+          postalCode: businessAddress?.postalCode,
+          country: businessAddress?.country,
+        }
+      : {}),
+  };
+  void (async () => {
+    await pushClientToGhl(link.clientId, ghlFields);
+    const context = await loadClientWebhookContext(link.clientId);
+    await postCrmWebhook('client.onboarded', {
+      ...context,
+      contact: ghlFields,
+      portalLoginUrl: `${config.clientPortalUrl}/client-login`,
+    });
+  })().catch((error) =>
+    logger.error('Post-onboarding GoHighLevel sync failed: %s', (error as Error).message)
+  );
+
   return {
     user: {
       id: user.id,
@@ -319,4 +405,154 @@ export const completeOnboarding = async (
     },
     tokens,
   };
+};
+
+// ---------------------------------------------------------------------------
+// GoHighLevel client sync
+// ---------------------------------------------------------------------------
+// A firm's clients are the contacts in its own sub-account that carry the
+// "client" tag — nothing else. This only READS from GoHighLevel and mirrors
+// those contacts into `Client`, so the firm can work with them in the app.
+
+const GHL_CLIENT_TAG = 'new client';
+
+const contactDisplayName = (contact: GhlContact): string => {
+  const fullName = [contact.firstName, contact.lastName]
+    .filter((part): part is string => Boolean(part?.trim()))
+    .join(' ')
+    .trim();
+  return (
+    fullName ||
+    contact.contactName?.trim() ||
+    contact.companyName?.trim() ||
+    contact.email?.trim() ||
+    contact.phone?.trim() ||
+    'Unnamed client'
+  );
+};
+
+interface ExistingClientRef {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  status?: string;
+  source?: string | null;
+  onboardedAt?: Date | null;
+}
+
+export interface GhlClientSyncResult {
+  tag: string;
+  /** Contacts GHL returned for the tag. */
+  fetched: number;
+  created: number;
+  updated: number;
+  /** GHL's own count for the tag, when it reports one. */
+  total: number;
+  /** True when the page cap was hit, so some contacts were not read. */
+  truncated: boolean;
+}
+
+/**
+ * Pull every contact tagged `tag` out of the firm's sub-account and mirror it
+ * into the firm's clients.
+ *
+ * Matching is by email, then phone, so re-running is idempotent and never
+ * duplicates a client. Existing rows are only ever filled in, never
+ * overwritten — a firm's own edits win over whatever GoHighLevel holds.
+ *
+ * The credential is the firm's own sub-account token, so this can only read
+ * that sub-account; a firm with no working credential gets a clear 409 from
+ * `ghlTokenProvider.forFirm`.
+ */
+export const syncClientsFromGhl = async (
+  firmId: string,
+  tag: string = GHL_CLIENT_TAG
+): Promise<GhlClientSyncResult> => {
+  const token = await ghlTokenProvider.forFirm(firmId);
+
+  let listed: GhlContactList;
+  try {
+    listed = await listContactsByTag(token, tag);
+  } catch (error) {
+    if (error instanceof GhlApiError && error.isAuthError) {
+      throw new ApiError(
+        httpStatus.BAD_REQUEST,
+        'The GoHighLevel sub-account token cannot read contacts. Give it the contacts scope in GoHighLevel, then reconnect the sub-account.'
+      );
+    }
+    if (error instanceof GhlApiError && error.status === 0) {
+      throw new ApiError(
+        httpStatus.BAD_GATEWAY,
+        'Could not reach GoHighLevel to fetch contacts. Please try again.'
+      );
+    }
+    throw error;
+  }
+
+  const { contacts, total, truncated } = listed;
+
+  const existing = await prisma.client.findMany({
+    where: { firmId, deletedAt: null },
+    select: { id: true, email: true, phone: true, status: true, source: true, onboardedAt: true },
+  });
+  const byEmail = new Map<string, ExistingClientRef>();
+  const byPhone = new Map<string, ExistingClientRef>();
+  for (const client of existing) {
+    if (client.email) byEmail.set(client.email.toLowerCase(), client);
+    if (client.phone) byPhone.set(client.phone, client);
+  }
+
+  let created = 0;
+  let updated = 0;
+
+  for (const contact of contacts) {
+    const email = contact.email?.trim().toLowerCase() || null;
+    const phone = contact.phone?.trim() || null;
+    const match =
+      (email ? byEmail.get(email) : undefined) ?? (phone ? byPhone.get(phone) : undefined) ?? null;
+
+    if (match) {
+      // A GoHighLevel client is only active once they finish onboarding here;
+      // undo any that were marked active without it.
+      if (match.status === 'ACTIVE' && match.source === 'ghl' && !match.onboardedAt) {
+        await prisma.client.update({ where: { id: match.id }, data: { status: 'ONBOARDING' } });
+        updated += 1;
+      }
+      // Fill gaps only — never clobber what the firm edited by hand.
+      const patch: { email?: string; phone?: string } = {};
+      if (!match.email && email) patch.email = email;
+      if (!match.phone && phone) patch.phone = phone;
+      if (Object.keys(patch).length > 0) {
+        await prisma.client.update({ where: { id: match.id }, data: patch });
+        updated += 1;
+      }
+      continue;
+    }
+
+    const client = await prisma.client.create({
+      data: {
+        firmId,
+        displayName: contactDisplayName(contact),
+        type: contact.companyName?.trim() ? 'BUSINESS' : 'INDIVIDUAL',
+        email,
+        phone,
+        // Same entry state as a manually added client: they get portal access
+        // once they complete the onboarding form.
+        status: 'ONBOARDING',
+        source: 'ghl',
+        metadata: { ghlContactId: contact.id, ghlTags: contact.tags ?? [] },
+      },
+      select: { id: true, email: true, phone: true },
+    });
+
+    if (client.email) byEmail.set(client.email.toLowerCase(), client);
+    if (client.phone) byPhone.set(client.phone, client);
+    created += 1;
+  }
+
+  logger.info(
+    `GHL client sync for firm ${firmId}: fetched=${contacts.length} created=${created} updated=${updated} truncated=${truncated}`
+  );
+
+  return { tag, fetched: contacts.length, created, updated, total, truncated };
 };
