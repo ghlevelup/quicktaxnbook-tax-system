@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { setAuthCookies, type TokenPair } from '@/libs/auth-cookies';
 import { backendFetch } from '@/libs/backend';
+import { publicUrl } from '@/libs/public-url';
 
 interface TeamEnterPayload {
   firm: { slug: string };
@@ -14,7 +15,7 @@ interface TeamEnterPayload {
  * cookies are set here (httpOnly); failures go back to the page with a message.
  */
 export async function GET(req: Request): Promise<NextResponse> {
-  const url = new URL(req.url);
+  const url = publicUrl(req, req.url);
   const locationId = url.searchParams.get('locationId') ?? '';
   const userId = url.searchParams.get('userId') ?? '';
 
@@ -28,16 +29,16 @@ export async function GET(req: Request): Promise<NextResponse> {
   );
 
   if (!body.success || !body.data) {
-    const target = new URL(
+    const target = publicUrl(
+      req,
       `/firms/${encodeURIComponent(locationId)}/teams/${encodeURIComponent(userId)}`,
-      url,
     );
     target.searchParams.set('error', body.message || `Failed (${status})`);
     return NextResponse.redirect(target);
   }
 
   const response = NextResponse.redirect(
-    new URL(`/firm/${body.data.firm.slug}/dashboard`, url),
+    publicUrl(req, `/firm/${body.data.firm.slug}/dashboard`),
   );
   setAuthCookies(response.cookies, body.data.tokens);
   return response;

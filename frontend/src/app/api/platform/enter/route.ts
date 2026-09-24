@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { setAuthCookies, type TokenPair } from '@/libs/auth-cookies';
 import { backendFetch } from '@/libs/backend';
+import { publicUrl } from '@/libs/public-url';
 
 interface EnterPayload {
   outcome: 'OK' | 'TOKEN_REQUIRED';
@@ -23,12 +24,12 @@ const enter = (body: unknown) =>
  * Otherwise the page is sent back to the token form.
  */
 export async function GET(req: Request): Promise<NextResponse> {
-  const url = new URL(req.url);
+  const url = publicUrl(req, req.url);
   const relationshipNumber = url.searchParams.get('relationshipNumber') ?? '';
 
   const { status, body } = await enter({ relationshipNumber });
 
-  const back = new URL('/platform', url);
+  const back = publicUrl(req, '/platform');
   if (!body.success || !body.data) {
     back.searchParams.set('error', body.message || `Failed (${status})`);
     return NextResponse.redirect(back);
@@ -39,7 +40,7 @@ export async function GET(req: Request): Promise<NextResponse> {
     return NextResponse.redirect(back);
   }
 
-  const response = NextResponse.redirect(new URL('/platform/firms', url));
+  const response = NextResponse.redirect(publicUrl(req, '/platform/firms'));
   setAuthCookies(response.cookies, body.data.tokens);
   return response;
 }

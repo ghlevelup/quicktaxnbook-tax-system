@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { setAuthCookies, type TokenPair } from '@/libs/auth-cookies';
 import { backendFetch } from '@/libs/backend';
+import { publicUrl } from '@/libs/public-url';
 
 interface EnterPayload {
   outcome: 'OK' | 'TOKEN_REQUIRED';
@@ -16,7 +17,7 @@ interface EnterPayload {
  * dashboard. When no working token is on file, the page is sent to the token form.
  */
 export async function GET(req: Request): Promise<NextResponse> {
-  const url = new URL(req.url);
+  const url = publicUrl(req, req.url);
   const locationId = url.searchParams.get('locationId') ?? '';
   const page = `/firms/${encodeURIComponent(locationId)}`;
 
@@ -27,19 +28,19 @@ export async function GET(req: Request): Promise<NextResponse> {
   });
 
   if (!body.success || !body.data) {
-    const target = new URL(page, url);
+    const target = publicUrl(req, page);
     target.searchParams.set('error', body.message || `Failed (${status})`);
     return NextResponse.redirect(target);
   }
 
   if (body.data.outcome === 'TOKEN_REQUIRED' || !body.data.tokens) {
-    const target = new URL(page, url);
+    const target = publicUrl(req, page);
     target.searchParams.set('connect', '1');
     return NextResponse.redirect(target);
   }
 
   const response = NextResponse.redirect(
-    new URL(`/firm/${body.data.firm?.slug}/dashboard`, url),
+    publicUrl(req, `/firm/${body.data.firm?.slug}/dashboard`),
   );
   setAuthCookies(response.cookies, body.data.tokens);
   return response;

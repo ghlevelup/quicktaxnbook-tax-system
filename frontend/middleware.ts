@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 import { ACCESS_COOKIE } from '@/libs/auth-cookies';
+import { publicUrl } from '@/libs/public-url';
 
 // Fast, cookie-presence-only redirect for obviously-unauthenticated visits.
 // Real authorization (role checks, token validity) happens server-side in
@@ -19,17 +20,17 @@ export function middleware(request: NextRequest) {
   if (hasSession) return NextResponse.next();
 
   if (pathname.startsWith('/platform/')) {
-    return NextResponse.redirect(new URL('/platform', request.url));
+    return NextResponse.redirect(publicUrl(request, '/platform'));
   }
   if (pathname === '/firm' || pathname.startsWith('/firm/')) {
-    return NextResponse.redirect(new URL('/login', request.url));
+    return NextResponse.redirect(publicUrl(request, '/login'));
   }
   if (
     CLIENT_PREFIXES.some(
       (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
     )
   ) {
-    return NextResponse.redirect(new URL('/client-login', request.url));
+    return NextResponse.redirect(publicUrl(request, '/client-login'));
   }
 
   return NextResponse.next();
