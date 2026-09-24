@@ -152,7 +152,16 @@ export const getOnboardingLinkInfo = async (token: string) => {
     where: { tokenHash },
     include: {
       firm: { select: { name: true } },
-      client: { select: { displayName: true, status: true, type: true, email: true, phone: true } },
+      client: {
+        select: {
+          displayName: true,
+          status: true,
+          type: true,
+          email: true,
+          phone: true,
+          metadata: true,
+        },
+      },
     },
   });
 
@@ -167,8 +176,15 @@ export const getOnboardingLinkInfo = async (token: string) => {
   // Best-effort split of the name the admin typed at creation, so the client
   // sees it pre-filled on the onboarding form instead of starting from blank
   // fields that don't match what the firm already has on file.
-  const [prefillFirstName, ...rest] = link.client.displayName.trim().split(/\s+/);
-  const prefillLastName = rest.join(' ') || undefined;
+  const [splitFirst, ...rest] = link.client.displayName.trim().split(/\s+/);
+  const meta = (link.client.metadata as Record<string, unknown> | null) ?? {};
+  const fromGhl = (key: string) =>
+    typeof meta[key] === 'string' && meta[key] ? (meta[key] as string) : undefined;
+  // A GoHighLevel client keeps the contact's own first/last/company name, which
+  // is more reliable than splitting the display name.
+  const prefillFirstName = fromGhl('ghlFirstName') ?? (splitFirst || undefined);
+  const prefillLastName = fromGhl('ghlLastName') ?? (rest.join(' ') || undefined);
+  const prefillBusinessName = fromGhl('ghlCompanyName');
 
   return {
     firmName: link.firm.name,
@@ -176,6 +192,7 @@ export const getOnboardingLinkInfo = async (token: string) => {
     clientType: link.client.type,
     prefillFirstName: prefillFirstName || undefined,
     prefillLastName,
+    prefillBusinessName,
     prefillEmail: link.client.email,
     prefillPhone: link.client.phone,
     expiresAt: link.expiresAt,
@@ -414,7 +431,7 @@ export const completeOnboarding = async (
 // "client" tag — nothing else. This only READS from GoHighLevel and mirrors
 // those contacts into `Client`, so the firm can work with them in the app.
 
-const GHL_CLIENT_TAG = 'new client';
+const GHL_CLIENT_TAG = 'new-client';
 
 const contactDisplayName = (contact: GhlContact): string => {
   const fullName = [contact.firstName, contact.lastName]
@@ -431,6 +448,15 @@ const contactDisplayName = (contact: GhlContact): string => {
   );
 };
 
+/** What we remember about the GoHighLevel contact, so onboarding can prefill from it. */
+const ghlMetadata = (contact: GhlContact) => ({
+  ghlContactId: contact.id,
+  ghlTags: contact.tags ?? [],
+  ghlFirstName: contact.firstName?.trim() || null,
+  ghlLastName: contact.lastName?.trim() || null,
+  ghlCompanyName: contact.companyName?.trim() || null,
+});
+
 interface ExistingClientRef {
   id: string;
   email: string | null;
@@ -438,6 +464,7 @@ interface ExistingClientRef {
   status?: string;
   source?: string | null;
   onboardedAt?: Date | null;
+  metadata?: unknown;
 }
 
 export interface GhlClientSyncResult {
@@ -493,7 +520,15 @@ export const syncClientsFromGhl = async (
 
   const existing = await prisma.client.findMany({
     where: { firmId, deletedAt: null },
-    select: { id: true, email: true, phone: true, status: true, source: true, onboardedAt: true },
+    select: {
+      id: true,
+      email: true,
+      phone: true,
+      status: true,
+      source: true,
+      onboardedAt: true,
+      metadata: true,
+    },
   });
   const byEmail = new Map<string, ExistingClientRef>();
   const byPhone = new Map<string, ExistingClientRef>();
@@ -518,6 +553,15 @@ export const syncClientsFromGhl = async (
         await prisma.client.update({ where: { id: match.id }, data: { status: 'ONBOARDING' } });
         updated += 1;
       }
+      // Keep the remembered GoHighLevel names/tags current (used to prefill onboarding).
+      if (match.source === 'ghl') {
+        const before = JSON.stringify(match.metadata ?? {});
+        const merged = { ...((match.metadata as Record<string, unknown> | null) ?? {}), ...ghlMetadata(contact) };
+        if (JSON.stringify(merged) !== before) {
+          await prisma.client.update({ where: { id: match.id }, data: { metadata: merged } });
+          updated += 1;
+        }
+      }
       // Fill gaps only — never clobber what the firm edited by hand.
       const patch: { email?: string; phone?: string } = {};
       if (!match.email && email) patch.email = email;
@@ -540,7 +584,7 @@ export const syncClientsFromGhl = async (
         // once they complete the onboarding form.
         status: 'ONBOARDING',
         source: 'ghl',
-        metadata: { ghlContactId: contact.id, ghlTags: contact.tags ?? [] },
+        metadata: ghlMetadata(contact),
       },
       select: { id: true, email: true, phone: true },
     });

@@ -41,6 +41,7 @@ interface OnboardingLinkInfo {
   clientType: 'INDIVIDUAL' | 'BUSINESS' | 'TRUST_ESTATE' | 'NONPROFIT';
   prefillFirstName: string | null;
   prefillLastName: string | null;
+  prefillBusinessName?: string | null;
   prefillEmail: string | null;
   prefillPhone: string | null;
   expiresAt: string;
@@ -228,7 +229,7 @@ function BusinessOnboardingForm({
     resolver: zodResolver(businessOnboardingSchema),
     defaultValues: {
       business: {
-        legalName: info.clientDisplayName,
+        legalName: info.prefillBusinessName ?? info.clientDisplayName,
         ein: '',
         website: '',
         phone: '',
@@ -241,8 +242,8 @@ function BusinessOnboardingForm({
           country: 'US',
         },
       },
-      firstName: '',
-      lastName: '',
+      firstName: info.prefillFirstName ?? '',
+      lastName: info.prefillLastName ?? '',
       email: info.prefillEmail ?? '',
       phone: info.prefillPhone ?? '',
       password: '',

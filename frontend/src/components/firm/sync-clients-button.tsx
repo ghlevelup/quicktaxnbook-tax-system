@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { useSyncClientsFromGhl } from '@/features/clients/hooks/use-clients';
 
 /**
- * Mirrors the firm's GoHighLevel contacts tagged "new client" into the client list.
+ * Mirrors the firm's GoHighLevel contacts tagged "new-client" into the client list.
  *
  * Idempotent: contacts are matched by email/phone, so running it again updates
  * nothing that already exists rather than creating duplicates. Requires the firm

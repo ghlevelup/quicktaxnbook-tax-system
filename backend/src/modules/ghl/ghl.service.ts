@@ -725,7 +725,10 @@ export const listContactsByTag = async (
 ): Promise<GhlContactList> => {
   const locationId = options.locationId ?? token.locationId;
   const maxPages = options.maxPages ?? CONTACT_MAX_PAGES;
-  const wanted = tag.trim().toLowerCase();
+  // Tag names are compared ignoring case and hyphen/underscore/space differences,
+  // so "new-client", "New Client" and "new_client" are the same tag.
+  const normalizeTag = (value: string) => value.trim().toLowerCase().replace(/[\s_-]+/g, ' ');
+  const wanted = normalizeTag(tag);
 
   const collected: GhlContact[] = [];
   let total = 0;
@@ -755,7 +758,7 @@ export const listContactsByTag = async (
 
   const contacts = collected.filter((contact) =>
     (contact.tags ?? []).some(
-      (value) => typeof value === 'string' && value.trim().toLowerCase() === wanted
+      (value) => typeof value === 'string' && normalizeTag(value) === wanted
     )
   );
 

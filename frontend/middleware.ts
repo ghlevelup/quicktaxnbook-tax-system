@@ -5,7 +5,11 @@ import { ACCESS_COOKIE } from '@/libs/auth-cookies';
 // Fast, cookie-presence-only redirect for obviously-unauthenticated visits.
 // Real authorization (role checks, token validity) happens server-side in
 // each area's layout.tsx via requireRole() — this is a UX shortcut only.
-const STAFF_PREFIXES = ['/platform', '/firm'];
+//
+// `/platform` itself is deliberately NOT protected: it is the public entry where
+// the agency admin enters the agency token + relationship number. Everything
+// under it (`/platform/firms`, ...) needs a session and falls back to that entry.
+// `/firms/...` (link entry for firm owners and team) is outside every matcher.
 const CLIENT_PREFIXES = ['/client'];
 
 export function middleware(request: NextRequest) {
@@ -14,17 +18,17 @@ export function middleware(request: NextRequest) {
 
   if (hasSession) return NextResponse.next();
 
-  const isStaffPath = STAFF_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
-  const isClientPath = CLIENT_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
-
-  if (isStaffPath) {
+  if (pathname.startsWith('/platform/')) {
+    return NextResponse.redirect(new URL('/platform', request.url));
+  }
+  if (pathname === '/firm' || pathname.startsWith('/firm/')) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
-  if (isClientPath) {
+  if (
+    CLIENT_PREFIXES.some(
+      (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+    )
+  ) {
     return NextResponse.redirect(new URL('/client-login', request.url));
   }
 

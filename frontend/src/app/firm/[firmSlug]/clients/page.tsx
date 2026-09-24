@@ -17,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { useAuth } from '@/features/auth/hooks/auth-provider';
 import {
   useAutoSyncClientsFromGhl,
   useClients,
@@ -24,6 +25,8 @@ import {
 import { CLIENT_TYPE_LABELS } from '@/features/clients/types';
 
 export default function ClientsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.accountRole === 'FIRM_ADMIN';
   useAutoSyncClientsFromGhl();
   const { data, isPending } = useClients();
   const clients = data?.results ?? [];
@@ -36,7 +39,7 @@ export default function ClientsPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             <SyncClientsButton />
-            <CreateClientDialog />
+            {isAdmin ? <CreateClientDialog /> : null}
           </div>
         }
       />
@@ -51,7 +54,7 @@ export default function ClientsPage() {
           <EmptyState
             icon="briefcase"
             title="No clients yet"
-            description='Add your first client, or tag contacts "new client" in your GoHighLevel sub-account and press Refresh.'
+            description='Add your first client, or tag contacts "new-client" in your GoHighLevel sub-account and press Refresh.'
           />
         ) : (
           <Table>
@@ -87,8 +90,9 @@ export default function ClientsPage() {
                         clientName={client.displayName}
                       />
                     ) : null}
-                    {client.status === 'ACTIVE' ||
-                    client.status === 'INACTIVE' ? (
+                    {isAdmin &&
+                    (client.status === 'ACTIVE' ||
+                      client.status === 'INACTIVE') ? (
                       <ClientStatusAction client={client} />
                     ) : null}
                   </TableCell>

@@ -8,7 +8,11 @@ const router = express.Router();
 
 router.use(authenticate(), requireFirmStaff);
 
-router.route('/').post(clientController.createClient).get(clientController.listClients);
+// Adding a client is the firm owner's job; team members can only view.
+router
+  .route('/')
+  .post(requireFirmAdmin, clientController.createClient)
+  .get(clientController.listClients);
 
 // Contacts tagged as clients in the firm's GoHighLevel sub-account.
 router.post('/ghl/sync', clientController.syncClientsFromGhl);
